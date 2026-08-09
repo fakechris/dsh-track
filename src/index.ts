@@ -50,24 +50,42 @@ function resolveKv(ctx: Context): Promise<KvFacet> {
     }
     const found = check()
     if (found) { resolve(found); return }
+    // Cordis starts plugins with no mutual dependency in parallel; the json
+    // backend may register after this plugin's apply. Poll generously (30s)
+    // — the web boot registers storage-json only after its deps settle.
     const timer = setInterval(() => {
       const kv = check()
       if (kv) { clearInterval(timer); if (deadline) clearTimeout(deadline); resolve(kv) }
-    }, 100)
+    }, 200)
     deadline = setTimeout(() => {
       clearInterval(timer)
       reject(new Error('involute: no storage backend with kv facet mounted (json or sqlite)'))
-    }, 5000)
+    }, 30000)
   })
 }
 
 export function apply(ctx: Context, config?: Config) {
   const teamKey = config?.teamKey ?? DEFAULT_TEAM_KEY
+  // HTTP handlers may fire before the store effect opens the unit; keep a
+  // lazily-resolved open so the API works regardless of boot ordering.
+  let openPromise: Promise<void> | null = null
+  const ensureStoreOpen = (): Promise<void> => {
+    if (store.isOpen) return Promise.resolve()
+    openPromise ??= resolveKv(ctx).then((kv) => store.open(kv))
+    return openPromise
+  }
 
   // Open the KV unit once a kv-capable backend lands (see resolveKv).
   ctx.effect(async () => {
-    const kv = await resolveKv(ctx)
-    await store.open(kv)
+    try {
+      const kv = await resolveKv(ctx)
+      console.log('[dsh-involute] kv backend resolved, opening store')
+      await store.open(kv)
+      console.log('[dsh-involute] store open:', store.isOpen)
+    } catch (e) {
+      console.error('[dsh-involute] store open failed:', e)
+      throw e
+    }
     return () => store.close()
   })
 
@@ -240,6 +258,7 @@ export function apply(ctx: Context, config?: Config) {
   // The client plugin fetches captures/decisions/issues over these routes so
   // the panel has a data face without an api-remotes generated pipeline.
   ctx.inject(['httpServer'], (serverCtx) => {
+    console.log('[dsh-involute] httpServer inject fired')
     const json = (res: ServerResponse, body: unknown, status = 200): void => {
       res.writeHead(status, { 'content-type': 'application/json' })
       res.end(JSON.stringify(body))
@@ -255,44 +274,46 @@ export function apply(ctx: Context, config?: Config) {
         req.on('error', reject)
       })
 
-    const api = (path: string) => serverCtx.httpServer.register({
-      kind: 'exact',
-      path: `/api/involute${path}`,
-      handler: async (req, res) => {
-        if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return }
-        try {
-          if (req.method === 'GET' && req.url?.startsWith('/api/involute/captures')) {
-            json(res, { captures: await store.listCaptures() }); return
-          }
-          if (req.method === 'GET' && req.url?.startsWith('/api/involute/decisions')) {
-            json(res, { decisions: await store.listDecisions() }); return
-          }
-          if (req.method === 'GET' && req.url?.startsWith('/api/involute/issues')) {
-            json(res, { issues: await store.listIssues() }); return
-          }
-          if (req.method === 'POST' && req.url === '/api/involute/captures') {
-            const body = await readBody(req)
-            const content = typeof body.content === 'string' ? body.content : ''
-            if (!content) { json(res, { error: 'content required' }, 400); return }
-            const tags = Array.isArray(body.tags) ? body.tags.filter((t): t is string => typeof t === 'string') : []
-            const capture: Capture = {
-              id: makeId('capture'),
-              content,
-              source: 'user',
-              status: 'open',
-              tags,
-              createdAt: new Date().toISOString(),
-            }
-            await store.upsertCapture(capture)
-            json(res, { ok: true, capture }); return
-          }
-          json(res, { error: 'not found' }, 404)
-        } catch (e) {
+    // Register the three GET routes + the POST capture route immediately.
+    // (A prior version wrapped register in an `api(path)` helper that was
+    // returned but never invoked — routes were never registered.)
+    const registerRoute = (path: string, handler: (req: IncomingMessage, res: ServerResponse) => Promise<void> | void) =>
+      serverCtx.httpServer.register({
+        kind: 'exact',
+        path: `/api/involute${path}`,
+        handler: (req, res) => Promise.resolve(handler(req, res)).catch((e) => {
           json(res, { error: e instanceof Error ? e.message : String(e) }, 500)
+        }),
+      })
+    registerRoute('/captures', async (req, res) => {
+      await ensureStoreOpen()
+      if (req.method === 'POST') {
+        const body = await readBody(req)
+        const content = typeof body.content === 'string' ? body.content : ''
+        if (!content) { json(res, { error: 'content required' }, 400); return }
+        const tags = Array.isArray(body.tags) ? body.tags.filter((t): t is string => typeof t === 'string') : []
+        const capture: Capture = {
+          id: makeId('capture'),
+          content,
+          source: 'user',
+          status: 'open',
+          tags,
+          createdAt: new Date().toISOString(),
         }
-      },
+        await store.upsertCapture(capture)
+        json(res, { ok: true, capture }); return
+      }
+      if (req.method === 'GET') { json(res, { captures: await store.listCaptures() }); return }
+      json(res, { error: 'method not allowed' }, 405)
     })
-    return api
+    registerRoute('/decisions', async (_req, res) => {
+      await ensureStoreOpen()
+      json(res, { decisions: await store.listDecisions() })
+    })
+    registerRoute('/issues', async (_req, res) => {
+      await ensureStoreOpen()
+      json(res, { issues: await store.listIssues() })
+    })
   })
 }
 
