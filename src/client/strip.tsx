@@ -1,41 +1,60 @@
 /**
  * InvoluteStrip: the composer-dock strip surfacing decision-point and
- * capture-wall state. Renders a labeled count row with a badge; the whole
- * strip is a button affordance (Phase 0b: click target reserved — answering
- * and capture-wall navigation land in the next step).
+ * capture-wall state. Styles are inline (no CSS modules) so the client
+ * bundle needs no CSS pipeline.
  * @module @deepseek-ai/dsh-involute/client/strip
  */
 
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
-// Type-only: pulls the locale merge (LocaleNamespaceMap['involute']) into this
-// program so t('strip.*') literal keys type-check.
-import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type { InvoluteStripProps } from './strip-contract.ts'
 import type { InvoluteKey } from './locales.ts'
-// Type-only: the entry module carries the LocaleNamespaceMap merge via the
-// same declaration-merge pattern as ui-goal's client/index.ts.
-import type {} from './index.ts'
-import css from './strip.module.css'
+
+const style = {
+  strip: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 8,
+    padding: '2px 8px',
+    border: '1px solid rgba(128, 128, 128, 0.3)',
+    borderRadius: 6,
+    background: 'transparent',
+    color: 'inherit',
+    fontSize: 12,
+    cursor: 'pointer',
+  } as const,
+  label: { fontWeight: 600 } as const,
+  badge: {
+    padding: '0 6px',
+    borderRadius: 999,
+    background: '#4c8dff',
+    color: '#fff',
+    fontSize: 11,
+    lineHeight: 16,
+  } as const,
+  muted: { opacity: 0.7 } as const,
+  empty: { opacity: 0.55, fontStyle: 'italic' } as const,
+}
 
 /** Involute strip component: label + pending decision / capture counts. */
 export function InvoluteStrip({ decisions, captures, t }: InvoluteStripProps & PropsLocale<'involute'>) {
   const hasWork = decisions > 0 || captures > 0
+  const plural = (n: number) => (n === 1 ? '' : 's')
   return (
-    <button type="button" className={css.strip} data-testid="involute-strip">
-      <span className={css.label}>{t('strip.label')}</span>
+    <button type="button" style={style.strip} data-testid="involute-strip">
+      <span style={style.label}>{t('strip.label')}</span>
       {hasWork ? (
-        <span className={css.counts}>
+        <span>
           {decisions > 0 && (
-            <span className={css.badge} data-kind="decisions" title={t('strip.decisions', { n: decisions, plural: decisions === 1 ? '' : 's' })}>
-              {t('strip.decisions', { n: decisions, plural: decisions === 1 ? '' : 's' })}
+            <span style={style.badge} title={t('strip.decisions', { n: decisions, plural: plural(decisions) })}>
+              {t('strip.decisions', { n: decisions, plural: plural(decisions) })}
             </span>
           )}
           {captures > 0 && (
-            <span className={css.muted}>{t('strip.captures', { n: captures, plural: captures === 1 ? '' : 's' })}</span>
+            <span style={style.muted}>{t('strip.captures', { n: captures, plural: plural(captures) })}</span>
           )}
         </span>
       ) : (
-        <span className={css.empty}>{t('strip.empty')}</span>
+        <span style={style.empty}>{t('strip.empty')}</span>
       )}
     </button>
   )

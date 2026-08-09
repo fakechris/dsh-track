@@ -7,10 +7,10 @@
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "/Users/chris/.dsh/source/current/node_modules/typescript/bin/tsc -p tsconfig.json && /Users/chris/.dsh/source/current/node_modules/.bin/tsdown -c tsdown.client.config.ts && node -e \"require('fs').renameSync('lib/client.cjs','lib/client.js')\"",
     "prepack": "npm run build",
-    "test": "vitest run tests",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "test": "/Users/chris/.dsh/source/current/node_modules/.bin/vitest run tests",
+    "typecheck": "/Users/chris/.dsh/source/current/node_modules/typescript/bin/tsc -p tsconfig.json --noEmit"
   },
   "peerDependencies": {
     "@deepseek-ai/dsh-session": "*",
@@ -39,7 +39,7 @@
     },
     "./client": {
       "types": "./lib/types/client/index.d.ts",
-      "default": "./lib/client/index.js"
+      "default": "./lib/client.js"
     },
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
