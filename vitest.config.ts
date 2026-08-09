@@ -1,0 +1,22 @@
+/**
+ * Standalone vitest config: alias @deepseek-ai/dsh-* peer packages to the
+ * running DSH checkout's built lib so runtime imports resolve outside the
+ * workspace (same strategy as the community dsh-toolkit repos).
+ */
+import { defineConfig } from 'vitest/config'
+import { fileURLToPath } from 'node:url'
+
+const DSH = '/Users/chris/.dsh/source/current'
+
+export default defineConfig({
+  resolve: {
+    alias: [
+      { find: 'cordis', replacement: fileURLToPath(new URL(`${DSH}/vendor/cordis/lib/index.js`, import.meta.url)) },
+      { find: '@deepseek-ai/dsh-storage', replacement: fileURLToPath(new URL(`${DSH}/packages/storage/storage/lib/index.js`, import.meta.url)) },
+      { find: '@deepseek-ai/dsh-storage-json', replacement: fileURLToPath(new URL(`${DSH}/packages/storage/storage-json/lib/index.js`, import.meta.url)) },
+      { find: '@deepseek-ai/dsh-tools', replacement: fileURLToPath(new URL(`${DSH}/packages/core/tools/lib/index.js`, import.meta.url)) },
+      { find: '@deepseek-ai/dsh-session', replacement: fileURLToPath(new URL(`${DSH}/packages/core/session/lib/index.js`, import.meta.url)) },
+      { find: '@deepseek-ai/dsh-system-prompt', replacement: fileURLToPath(new URL(`${DSH}/packages/core/system-prompt/lib/index.js`, import.meta.url)) },
+    ],
+  },
+})
