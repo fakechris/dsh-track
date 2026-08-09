@@ -12,9 +12,12 @@
  * @module @deepseek-ai/dsh-involute
  */
 
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from 'cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { KvFacet } from '@deepseek-ai/dsh-storage'
+// Type-only: pulls the ctx.httpServer Context merge from dsh-host-webserver.
+import type {} from '@deepseek-ai/dsh-host-webserver'
 import { InvoluteStore, makeId } from './store.ts'
 import type { Capture, Decision, Issue } from './types.ts'
 
@@ -231,6 +234,65 @@ export function apply(ctx: Context, config?: Config) {
     // Reserved: fold todo/write, plan/mode, goal/change into linked issues.
     // MVP keeps this as an observation point; auto-aggregation is Phase 0b.
     void event
+  })
+
+  // ---- HTTP API for the Web client panel (optional: needs httpServer) ----
+  // The client plugin fetches captures/decisions/issues over these routes so
+  // the panel has a data face without an api-remotes generated pipeline.
+  ctx.inject(['httpServer'], (serverCtx) => {
+    const json = (res: ServerResponse, body: unknown, status = 200): void => {
+      res.writeHead(status, { 'content-type': 'application/json' })
+      res.end(JSON.stringify(body))
+    }
+    const readBody = (req: IncomingMessage): Promise<Record<string, unknown>> =>
+      new Promise((resolve, reject) => {
+        let data = ''
+        req.on('data', (c) => { data += c })
+        req.on('end', () => {
+          try { resolve(data ? JSON.parse(data) as Record<string, unknown> : {}) }
+          catch (e) { reject(e) }
+        })
+        req.on('error', reject)
+      })
+
+    const api = (path: string) => serverCtx.httpServer.register({
+      kind: 'exact',
+      path: `/api/involute${path}`,
+      handler: async (req, res) => {
+        if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return }
+        try {
+          if (req.method === 'GET' && req.url?.startsWith('/api/involute/captures')) {
+            json(res, { captures: await store.listCaptures() }); return
+          }
+          if (req.method === 'GET' && req.url?.startsWith('/api/involute/decisions')) {
+            json(res, { decisions: await store.listDecisions() }); return
+          }
+          if (req.method === 'GET' && req.url?.startsWith('/api/involute/issues')) {
+            json(res, { issues: await store.listIssues() }); return
+          }
+          if (req.method === 'POST' && req.url === '/api/involute/captures') {
+            const body = await readBody(req)
+            const content = typeof body.content === 'string' ? body.content : ''
+            if (!content) { json(res, { error: 'content required' }, 400); return }
+            const tags = Array.isArray(body.tags) ? body.tags.filter((t): t is string => typeof t === 'string') : []
+            const capture: Capture = {
+              id: makeId('capture'),
+              content,
+              source: 'user',
+              status: 'open',
+              tags,
+              createdAt: new Date().toISOString(),
+            }
+            await store.upsertCapture(capture)
+            json(res, { ok: true, capture }); return
+          }
+          json(res, { error: 'not found' }, 404)
+        } catch (e) {
+          json(res, { error: e instanceof Error ? e.message : String(e) }, 500)
+        }
+      },
+    })
+    return api
   })
 }
 

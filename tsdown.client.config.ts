@@ -23,6 +23,8 @@ export default defineConfig({
       'react',
       'react/jsx-runtime',
       'react/jsx-dev-runtime',
+      'react-dom',
+      'react-dom/client',
       '@deepseek-ai/dsh-client-runtime',
       '@deepseek-ai/dsh-client-runtime/client',
       '@deepseek-ai/dsh-client-ui-slots',

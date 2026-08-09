@@ -1,12 +1,13 @@
 /**
- * Involute Bridge client plugin — browser half. Registers the Involute strip
- * into the conversation composer dock (a `list` slot where ui-goal already
- * sits), surfacing decision-point and capture-wall state with an interaction
- * affordance. This is the visible entry point of the embedded task engine.
+ * Involute Bridge client plugin — browser half.
  *
- * Phase 0b scope: the strip renders pending-decision count + capture count
- * with a click affordance; live counts ride the session projection when the
- * host contributes one, and fall back to an empty state otherwise.
+ * Visible surfaces:
+ * 1. A sidebar entry row ("Involute") injected below New Session — the
+ *    primary entry point (sidebar slots are single-occupant; DOM injection
+ *    is the task-board precedent).
+ * 2. A center-column panel (capture wall + pending decisions + issues)
+ *    toggled by the entry, fed by the host HTTP API (/api/involute/*).
+ * 3. A composer-dock strip showing pending counts.
  * @module @deepseek-ai/dsh-involute/client
  */
 
@@ -18,6 +19,8 @@ import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type { InvoluteStripProps } from './strip-contract.ts'
 import { InvoluteStrip } from './strip.tsx'
 import { en, NS, zh, type InvoluteKey } from './locales.ts'
+import { mountSidebarEntry } from './sidebar-entry.ts'
+import { mountPanel } from './panel-mount.tsx'
 
 export type { InvoluteStripProps } from './strip-contract.ts'
 export type { InvoluteKey } from './locales.ts'
@@ -26,21 +29,40 @@ export type { InvoluteKey } from './locales.ts'
 export const inject = ['slots', 'locale']
 
 /**
- * Register the Involute strip into the composer dock once the dock slot is on
- * the ledger (declaration-aware, same pattern as the subagent tree plugin).
+ * Client plugin body: sidebar entry + center panel + composer strip.
  * @param ctx - client root context.
  */
 export function apply(ctx: ClientContext): void {
+  console.log('[dsh-involute] client apply called')
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-involute: dictionaries')
 
+  // ---- center-column panel + sidebar entry ----
+  const { controller, disposer } = mountPanel()
+  ctx.effect(() => disposer, 'dsh-involute: panel')
+
+  // Pending decision count for the entry badge (live poll of the host API).
+  let pendingCount = 0
+  const pollPending = (): void => {
+    fetch('/api/involute/decisions')
+      .then((r) => r.json())
+      .then((d) => { pendingCount = (d.decisions ?? []).filter((x: { status: string }) => x.status === 'pending').length })
+      .catch(() => undefined)
+  }
+  pollPending()
+  const pendingTimer = window.setInterval(pollPending, 5000)
+  ctx.effect(() => () => window.clearInterval(pendingTimer), 'dsh-involute: pending poll')
+
+  const entryDisposer = mountSidebarEntry(
+    () => controller.toggle(),
+    () => pendingCount,
+  )
+  ctx.effect(() => entryDisposer, 'dsh-involute: sidebar entry')
+
+  // ---- composer-dock strip (counts) ----
   const injectActions = (): InvoluteStripProps => ({
-    // Phase 0b: static surface. The host-side decision/capture counts are
-    // wired through the api-remotes RPC in the next step; until then the strip
-    // renders the empty state with the affordance visible.
-    decisions: 0,
+    decisions: pendingCount,
     captures: 0,
   })
-
   ctx.slots.inject('conversation.composer.dock', () =>
     ctx.slots.register({
       name: 'conversation.composer.dock',
