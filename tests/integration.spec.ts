@@ -56,4 +56,19 @@ describe('involute integration with real storage', () => {
     const id = await involuteStore.nextIdentifier('INV')
     expect(id).toMatch(/^INV-\d+$/)
   })
+
+  it('writes a capture to the real json unit on disk and reads it back', async () => {
+    const id = 'involute_capture_e2e_check'
+    await involuteStore.upsertCapture({
+      id,
+      content: 'end-to-end check',
+      source: 'user',
+      status: 'open',
+      tags: [],
+      createdAt: new Date().toISOString(),
+    })
+    const caps = await involuteStore.listCaptures()
+    expect(caps.some((c) => c.id === id)).toBe(true)
+    expect(store.isOpen).toBe(true)
+  })
 })

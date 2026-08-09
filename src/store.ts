@@ -44,13 +44,27 @@ export class InvoluteStore {
   private unit!: KvUnit
   private chains: Record<string, WriteChain> = {}
   private opened = false
+  private openPromise: Promise<void> | null = null
 
   constructor(private readonly descriptor: KvUnitDescriptor = INVOLUTE_UNIT) {}
 
   /** Open the unit on a kv facet (json or sqlite backend). Call once at plugin apply. */
-  async open(kvFacet: KvFacet): Promise<void> {
-    this.unit = await kvFacet.open(this.descriptor)
-    this.opened = true
+  open(kvFacet: KvFacet): Promise<void> {
+    this.openPromise ??= kvFacet.open(this.descriptor).then((unit) => {
+      this.unit = unit
+      this.opened = true
+    })
+    return this.openPromise
+  }
+
+  /** Wait for the unit to be open before any store operation. */
+  private async ready(): Promise<void> {
+    if (this.opened) return
+    if (this.openPromise) {
+      await this.openPromise
+      return
+    }
+    throw new Error('involute: store is not open — the plugin did not complete initialization')
   }
 
   get isOpen(): boolean {
@@ -76,16 +90,19 @@ export class InvoluteStore {
   // ---- global ----
 
   async readGlobal(): Promise<InvoluteGlobal | null> {
+  await this.ready()
     const g = await this.unit.loadAll().then(({ global }) => global as InvoluteGlobal | null)
     return g
   }
 
   async writeGlobal(g: InvoluteGlobal): Promise<void> {
+  await this.ready()
     await this.chain('__global', () => this.unit.setGlobal(g))
   }
 
   /** Mint the next Linear-style identifier, e.g. `INV-12`. */
   async nextIdentifier(teamKey = 'INV'): Promise<string> {
+  await this.ready()
     const g = (await this.readGlobal()) ?? {
       version: 1 as const,
       teams: {},
@@ -99,12 +116,14 @@ export class InvoluteStore {
   // ---- captures ----
 
   async listCaptures(status?: Capture['status']): Promise<Capture[]> {
+  await this.ready()
     const { tables } = await this.unit.loadAll()
     const caps = Object.values(tables.captures ?? {}) as Capture[]
     return status ? caps.filter((c) => c.status === status) : caps
   }
 
   async upsertCapture(capture: Capture): Promise<void> {
+  await this.ready()
     await this.chain('captures', () =>
       this.unit.putRecord('captures', capture.id, capture))
   }
@@ -112,6 +131,7 @@ export class InvoluteStore {
   // ---- issues ----
 
   async listIssues(teamId?: string, state?: Issue['state']): Promise<Issue[]> {
+  await this.ready()
     const { tables } = await this.unit.loadAll()
     let issues = Object.values(tables.issues ?? {}) as Issue[]
     if (teamId) issues = issues.filter((i) => i.teamId === teamId)
@@ -120,42 +140,50 @@ export class InvoluteStore {
   }
 
   async getIssue(id: string): Promise<Issue | undefined> {
+  await this.ready()
     const { tables } = await this.unit.loadAll()
     return (tables.issues ?? {})[id] as Issue | undefined
   }
 
   async upsertIssue(issue: Issue): Promise<void> {
+  await this.ready()
     await this.chain('issues', () => this.unit.putRecord('issues', issue.id, issue))
   }
 
   async deleteIssue(id: string): Promise<void> {
+  await this.ready()
     await this.chain('issues', () => this.unit.deleteRecord('issues', id))
   }
 
   // ---- epics ----
 
   async listEpics(): Promise<Epic[]> {
+  await this.ready()
     const { tables } = await this.unit.loadAll()
     return Object.values(tables.epics ?? {}) as Epic[]
   }
 
   async upsertEpic(epic: Epic): Promise<void> {
+  await this.ready()
     await this.chain('epics', () => this.unit.putRecord('epics', epic.id, epic))
   }
 
   // ---- links ----
 
   async listLinks(): Promise<Link[]> {
+  await this.ready()
     const { tables } = await this.unit.loadAll()
     return Object.values(tables.links ?? {}) as Link[]
   }
 
   async upsertLink(link: Link): Promise<void> {
+  await this.ready()
     await this.chain('links', () => this.unit.putRecord('links', link.id, link))
   }
 
   /** All links touching one entity id (either direction). */
   async linksFor(id: string): Promise<Link[]> {
+  await this.ready()
     const links = await this.listLinks()
     return links.filter((l) => l.fromId === id || l.toId === id)
   }
@@ -163,12 +191,14 @@ export class InvoluteStore {
   // ---- decisions ----
 
   async listDecisions(status?: Decision['status']): Promise<Decision[]> {
+  await this.ready()
     const { tables } = await this.unit.loadAll()
     const ds = Object.values(tables.decisions ?? {}) as Decision[]
     return status ? ds.filter((d) => d.status === status) : ds
   }
 
   async upsertDecision(decision: Decision): Promise<void> {
+  await this.ready()
     await this.chain('decisions', () => this.unit.putRecord('decisions', decision.id, decision))
   }
 }

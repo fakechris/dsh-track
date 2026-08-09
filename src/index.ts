@@ -14,6 +14,7 @@
 
 import type { Context } from 'cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import type { KvFacet } from '@deepseek-ai/dsh-storage'
 import { InvoluteStore, makeId } from './store.ts'
 import type { Capture, Decision, Issue } from './types.ts'
 
@@ -31,16 +32,39 @@ export const DEFAULT_TEAM_KEY = 'INV'
 
 export const store = new InvoluteStore()
 
-export function apply(ctx: Context, config: Config) {
-  const teamKey = config.teamKey ?? DEFAULT_TEAM_KEY
+/**
+ * Resolve a kv-capable backend, waiting for storage-json/sqlite to register.
+ * Cordis starts plugins with no mutual dependency in parallel, so the json
+ * backend may land after this plugin's apply; poll a short grace period and
+ * fail loud rather than hanging or silently proceeding without storage.
+ */
+function resolveKv(ctx: Context): Promise<KvFacet> {
+  return new Promise((resolve, reject) => {
+    let deadline: ReturnType<typeof setTimeout> | undefined
+    const check = (): KvFacet | null => {
+      const backend = ctx.storage.backend.get('json') ?? ctx.storage.backend.get('sqlite')
+      return backend?.kv ?? null
+    }
+    const found = check()
+    if (found) { resolve(found); return }
+    const timer = setInterval(() => {
+      const kv = check()
+      if (kv) { clearInterval(timer); if (deadline) clearTimeout(deadline); resolve(kv) }
+    }, 100)
+    deadline = setTimeout(() => {
+      clearInterval(timer)
+      reject(new Error('involute: no storage backend with kv facet mounted (json or sqlite)'))
+    }, 5000)
+  })
+}
 
-  // ---- open the KV unit on the mounted json/sqlite backend ----
-  const backend = ctx.storage.backend.get('json') ?? ctx.storage.backend.get('sqlite')
-  if (!backend?.kv) {
-    throw new Error('involute: no storage backend with kv facet mounted (json or sqlite)')
-  }
+export function apply(ctx: Context, config?: Config) {
+  const teamKey = config?.teamKey ?? DEFAULT_TEAM_KEY
+
+  // Open the KV unit once a kv-capable backend lands (see resolveKv).
   ctx.effect(async () => {
-    await store.open(backend.kv!)
+    const kv = await resolveKv(ctx)
+    await store.open(kv)
     return () => store.close()
   })
 
