@@ -1,28 +1,41 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2024"],
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
     "module": "esnext",
     "moduleResolution": "bundler",
+    "jsx": "react-jsx",
     "outDir": "lib",
     "rootDir": "src",
     "declaration": true,
     "declarationDir": "lib/types",
     "allowImportingTsExtensions": true,
     "rewriteRelativeImportExtensions": true,
-    "typeRoots": ["/Users/chris/.dsh/source/current/node_modules/@types"],
+    "typeRoots": [
+      "/Users/chris/.dsh/source/current/node_modules/@types",
+      "/Users/chris/.dsh/source/current/apps/web/node_modules/@types"
+    ],
     "types": ["node"],
     "strict": true,
     "skipLibCheck": true,
     "noEmitOnError": true,
     "paths": {
       "cordis": ["/Users/chris/.dsh/source/current/vendor/cordis/lib/types/index.d.ts"],
+      "react": ["/Users/chris/.dsh/source/current/apps/web/node_modules/react"],
       "@deepseek-ai/dsh-tools": ["/Users/chris/.dsh/source/current/packages/core/tools/lib/types/index.d.ts"],
       "@deepseek-ai/dsh-session": ["/Users/chris/.dsh/source/current/packages/core/session/lib/types/index.d.ts"],
       "@deepseek-ai/dsh-storage": ["/Users/chris/.dsh/source/current/packages/storage/storage/lib/types/index.d.ts"],
-      "@deepseek-ai/dsh-storage-json": ["/Users/chris/.dsh/source/current/packages/storage/storage-json/lib/types/index.d.ts"]
+      "@deepseek-ai/dsh-storage-json": ["/Users/chris/.dsh/source/current/packages/storage/storage-json/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-system-prompt": ["/Users/chris/.dsh/source/current/packages/core/system-prompt/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-client-runtime": ["/Users/chris/.dsh/source/current/packages/client/runtime/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-client-runtime/client": ["/Users/chris/.dsh/source/current/packages/client/runtime/lib/types/client/index.d.ts"],
+      "@deepseek-ai/dsh-client-ui-slots": ["/Users/chris/.dsh/source/current/packages/client/ui-slots/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-client-ui-conversation": ["/Users/chris/.dsh/source/current/packages/client/ui-conversation/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-client-ui-conversation/client": ["/Users/chris/.dsh/source/current/packages/client/ui-conversation/lib/types/client/index.d.ts"],
+      "@deepseek-ai/dsh-client-locale": ["/Users/chris/.dsh/source/current/packages/client/locale/lib/types/index.d.ts"],
+      "@deepseek-ai/dsh-client-locale/client": ["/Users/chris/.dsh/source/current/packages/client/locale/lib/types/client/index.d.ts"]
     }
   },
   "include": ["src"],
-  "exclude": ["tests", "lib"]
+  "exclude": ["tests", "lib", "lib-client"]
 }

@@ -1,0 +1,46 @@
+/* Involute composer-dock strip. */
+.strip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 8px;
+  border: 1px solid var(--dsw-color-border, rgba(128, 128, 128, 0.3));
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-color-text-secondary, inherit);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.strip:hover {
+  border-color: var(--dsw-color-border-strong, rgba(128, 128, 128, 0.6));
+}
+
+.label {
+  font-weight: 600;
+  color: var(--dsw-color-text, inherit);
+}
+
+.counts {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.badge {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--dsw-color-accent, #4c8dff);
+  color: #fff;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.muted {
+  opacity: 0.7;
+}
+
+.empty {
+  opacity: 0.55;
+  font-style: italic;
+}
