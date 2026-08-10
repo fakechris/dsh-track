@@ -47,6 +47,9 @@
       "@deepseek-ai/dsh-session-query": [
         "/Users/chris/.dsh/source/current/packages/session-query/session-query/lib/types/index.d.ts"
       ],
+      "@deepseek-ai/dsh-llm": [
+        "/Users/chris/.dsh/source/current/packages/llm/llm/lib/types/index.d.ts"
+      ],
       "@deepseek-ai/dsh-system-prompt": [
         "/Users/chris/.dsh/source/current/packages/core/system-prompt/lib/types/index.d.ts"
       ],

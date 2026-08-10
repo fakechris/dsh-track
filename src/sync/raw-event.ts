@@ -53,8 +53,12 @@ export interface RawEvent {
   turnEndReason?: string
   /** Assistant message text (for assistant/message events), truncated. */
   assistantText?: string
+  /** User message text (for user/message events), truncated. */
+  userText?: string
   /** True when a tool/result carries an error-ish payload. */
   toolError?: boolean
+  /** Todo item count for todo/write events (full-snapshot length). */
+  todoCount?: number
   cwd?: string
   branch?: string
   /** Hash of the canonical JSON payload — content-addressing for dedup. */
@@ -135,6 +139,18 @@ function assistantText(event: SessionEvent): string | undefined {
   return text.length > 500 ? `${text.slice(0, 500)}…` : text
 }
 
+/** Concatenated text blocks of a user message (any source kind), truncated. */
+function userText(event: SessionEvent): string | undefined {
+  if (event.type !== 'user/message') return undefined
+  const text = event.data.content
+    ?.filter((b): b is { type: 'text'; text: string } => b.type === 'text' && typeof b.text === 'string')
+    .map((b) => b.text)
+    .join(' ')
+    .trim()
+  if (!text) return undefined
+  return text.length > 500 ? `${text.slice(0, 500)}…` : text
+}
+
 /** Best-effort error detection on a tool/result payload. */
 function toolErrorOf(event: SessionEvent): boolean | undefined {
   if (event.type !== 'tool/result') return undefined
@@ -146,6 +162,13 @@ function toolErrorOf(event: SessionEvent): boolean | undefined {
   const block = data.message?.content?.[0]
   if (block && block.isError === true) return true
   return false
+}
+
+/** Todo item count for todo/write full-snapshot events. */
+function todoCountOf(event: SessionEvent): number | undefined {
+  if (event.type !== 'todo/write') return undefined
+  const todos = (event.data as unknown as { todos?: unknown[] }).todos
+  return Array.isArray(todos) ? todos.length : undefined
 }
 
 /** Turn id from turn/start or step/start payloads. */
@@ -165,7 +188,9 @@ export function normalizeEvent(sessionId: string, event: SessionEvent, header?: 
   const { toolName, callId } = toolFacts(event)
   const reason = endReason(event)
   const text = assistantText(event)
+  const user = userText(event)
   const toolError = toolErrorOf(event)
+  const todoCount = todoCountOf(event)
   return {
     eventId: eventIdFor(sessionId, event.seq, payloadHash),
     sessionId,
@@ -180,7 +205,9 @@ export function normalizeEvent(sessionId: string, event: SessionEvent, header?: 
     callId,
     turnEndReason: reason,
     assistantText: text,
+    userText: user,
     toolError,
+    todoCount,
     cwd: header?.cwd,
     branch: undefined,
     payloadHash,

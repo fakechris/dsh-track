@@ -16,6 +16,7 @@ export default defineConfig({
       { find: '@deepseek-ai/dsh-storage-json', replacement: fileURLToPath(new URL(`${DSH}/packages/storage/storage-json/lib/index.js`, import.meta.url)) },
       { find: '@deepseek-ai/dsh-tools', replacement: fileURLToPath(new URL(`${DSH}/packages/core/tools/lib/index.js`, import.meta.url)) },
       { find: '@deepseek-ai/dsh-session', replacement: fileURLToPath(new URL(`${DSH}/packages/core/session/lib/index.js`, import.meta.url)) },
+      { find: '@deepseek-ai/dsh-llm', replacement: fileURLToPath(new URL(`${DSH}/packages/llm/llm/lib/index.js`, import.meta.url)) },
       { find: '@deepseek-ai/dsh-system-prompt', replacement: fileURLToPath(new URL(`${DSH}/packages/core/system-prompt/lib/index.js`, import.meta.url)) },
     ],
   },
