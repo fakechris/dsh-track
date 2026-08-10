@@ -8,7 +8,8 @@
     "directive": "Detail-level work instruction — concrete operation (fork/restart/commit/pr/push/install/configure/build/clone/submit/continue). NOT an issue by itself; it is a step toward some requirement. e.g. '帮我提交吧', '你来试一次重启', '继续查'.",
     "interruption": "User interruption/correction ('你搞砸了', '不对'). A signal (acceptance feedback, requirement change, blocker) — only becomes a new issue if it articulates a new independently verifiable goal.",
     "boundaryCases": [
-      "'帮我安装配置turtle-ui' — directive, but serves the surrounding investigation task (调研手段), so it stays INSIDE that task as evidence, not a separate issue.",
+      "'帮我安装配置turtle-ui' — requirement-leaning: turtle-ui is a product-domain object (dsh's TUI client), so installing/configuring it advances the product goal and may be an independent issue candidate (also serves the TUI research task).",
+      "'安装配置 pnpm/git' — environment-domain object (generic dev tooling), NOT an issue; pure environment prep.",
       "'更新 issue #514 表述' / '补一条评论' — directives that belong to the bug-fix task they serve.",
       "'重启失败、session 挂掉' — a problem report (could be an issue), distinct from the directive '你来试一次重启' (not an issue)."
     ]
@@ -164,7 +165,7 @@
           "seqEnd": 162721,
           "evidence": [
             "user/message seq7",
-            "user/message seq4997 (directive: 安装配置 turtle-ui — serves this investigation)",
+            "user/message seq4997 (install/configure turtle-ui — product-domain object, requirement-leaning; evidence for this investigation AND independent issue candidate)",
             "user/message seq34923 (directive: cd/ls — execution detail)",
             "user/message seq143401 (directive: 继续查)",
             "user/message seq162721 (requirement: turtle-ui 文档/稳定版本 tag)"
