@@ -45,8 +45,12 @@ function resolveKv(ctx: Context): Promise<KvFacet> {
   return new Promise((resolve, reject) => {
     let deadline: ReturnType<typeof setTimeout> | undefined
     const check = (): KvFacet | null => {
-      const backend = ctx.storage.backend.get('json') ?? ctx.storage.backend.get('sqlite')
-      return backend?.kv ?? null
+      // BackendRegistry.get throws for an unregistered name, so probe the
+      // registered names first — a backend may land after this plugin's apply.
+      const names = ctx.storage.backend.names()
+      const name = ['json', 'sqlite'].find((candidate) => names.includes(candidate))
+      if (!name) return null
+      return ctx.storage.backend.get(name).kv ?? null
     }
     const found = check()
     if (found) { resolve(found); return }

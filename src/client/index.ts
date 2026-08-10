@@ -19,8 +19,7 @@ import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type { InvoluteStripProps } from './strip-contract.ts'
 import { InvoluteStrip } from './strip.tsx'
 import { en, NS, zh, type InvoluteKey } from './locales.ts'
-import { mountSidebarEntry } from './sidebar-entry.ts'
-import { mountPanel } from './panel-mount.tsx'
+import { mountRightPanel } from './right-panel.ts'
 
 export type { InvoluteStripProps } from './strip-contract.ts'
 export type { InvoluteKey } from './locales.ts'
@@ -36,11 +35,11 @@ export function apply(ctx: ClientContext): void {
   console.log('[dsh-involute] client apply called')
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-involute: dictionaries')
 
-  // ---- center-column panel + sidebar entry ----
-  const { controller, disposer } = mountPanel()
-  ctx.effect(() => disposer, 'dsh-involute: panel')
+  // ---- right-side panel (lazyfish/side-panel pattern) ----
+  const panelDisposer = mountRightPanel()
+  ctx.effect(() => panelDisposer, 'dsh-involute: right panel')
 
-  // Pending decision count for the entry badge (live poll of the host API).
+  // Pending decision count for the composer strip (live poll of the host API).
   let pendingCount = 0
   const pollPending = (): void => {
     fetch('/api/involute/decisions')
@@ -51,12 +50,6 @@ export function apply(ctx: ClientContext): void {
   pollPending()
   const pendingTimer = window.setInterval(pollPending, 5000)
   ctx.effect(() => () => window.clearInterval(pendingTimer), 'dsh-involute: pending poll')
-
-  const entryDisposer = mountSidebarEntry(
-    () => controller.toggle(),
-    () => pendingCount,
-  )
-  ctx.effect(() => entryDisposer, 'dsh-involute: sidebar entry')
 
   // ---- composer-dock strip (counts) ----
   const injectActions = (): InvoluteStripProps => ({

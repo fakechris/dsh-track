@@ -24,15 +24,19 @@ describe('involute integration with real storage', () => {
   beforeAll(async () => {
     dir = await mkdtemp(join(tmpdir(), 'involute-int-'))
     ctx = new Context()
-    // Mount the service chain: storage hub → system-prompt → tool registry,
-    // then the json backend, then involute.
+    // Mount the service chain: storage hub → system-prompt → tool registry.
+    // Apply involute BEFORE the json backend registers — the web boot mounts
+    // storage-json concurrently with this plugin, and resolveKv must poll for
+    // the backend instead of failing on the first (empty) check.
     await ctx.plugin(Storage)
     await ctx.plugin(SystemPrompt)
     await ctx.plugin(ToolRegistry)
-    applyStorageJson(ctx, { root: dir })
     applyInvolute(ctx, { teamKey: 'INV' } as never)
+    await new Promise((r) => setTimeout(r, 300))
+    expect(store.isOpen).toBe(false)
+    applyStorageJson(ctx, { root: dir })
     // Let effects (store open) settle.
-    await new Promise((r) => setTimeout(r, 20))
+    await new Promise((r) => setTimeout(r, 1000))
   })
 
   afterAll(async () => {
@@ -40,8 +44,12 @@ describe('involute integration with real storage', () => {
   })
 
   it('opens the involute kv unit on the json backend', async () => {
-    // The plugin's apply opens the store in an effect; give the effect a tick.
-    await new Promise((r) => setTimeout(r, 10))
+    // The plugin polls for the backend on a 200ms tick, so wait for the open
+    // instead of a fixed sleep.
+    const deadline = Date.now() + 5000
+    while (!store.isOpen && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 50))
+    }
     expect(store.isOpen).toBe(true)
   })
 
