@@ -4,9 +4,11 @@
   "annotationDate": "2026-08-10",
   "purpose": "P0 golden proto v2: 5 sessions annotated with the request-intent layering rule (high-level requirement vs detail work directive). Task boundaries are subjective; report inter-annotator agreement before trusting any metric.",
   "intentLayering": {
+    "note": "Semantic judgement performed by the LLM (few-shot), NOT a rule keyword list — object-domain relevance ('is pnpm an env tool or the product core?') depends on workspace context, and a keyword list breaks outside this repo. Rules only filter source.kind and validate outputs. This block doubles as the few-shot exemplar set for the LLM.",
     "requirement": "High-level goal/problem/investigation with an independently verifiable deliverable — issue/epic candidate. e.g. '回到我们的目标', '提取质量不高，想清楚这件事', '研究官方有没有 branch from this', bug reports describing a problem.",
     "directive": "Detail-level work instruction — concrete operation (fork/restart/commit/pr/push/install/configure/build/clone/submit/continue). NOT an issue by itself; it is a step toward some requirement. e.g. '帮我提交吧', '你来试一次重启', '继续查'.",
     "interruption": "User interruption/correction ('你搞砸了', '不对'). A signal (acceptance feedback, requirement change, blocker) — only becomes a new issue if it articulates a new independently verifiable goal.",
+    "objectDomainRelevance": "Deciding factor for install/configure-style verbs: does the object belong to the product core domain (turtle-ui, harness components, project deps → requirement) or the environment domain (pnpm/git/node/brew → not an issue)? Assessed by the LLM from workspace context, not a hardcoded list.",
     "boundaryCases": [
       "'帮我安装配置turtle-ui' — requirement-leaning: turtle-ui is a product-domain object (dsh's TUI client), so installing/configuring it advances the product goal and may be an independent issue candidate (also serves the TUI research task).",
       "'安装配置 pnpm/git' — environment-domain object (generic dev tooling), NOT an issue; pure environment prep.",
