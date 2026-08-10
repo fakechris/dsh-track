@@ -116,6 +116,12 @@ export interface TrackGlobal {
   version: 1
   teams: Record<string, { id: string; name: string; cwd?: string }>
   identifierCounter: number
+  /**
+   * Incremental-sync cursor per workspace: last synced activity timestamp
+   * (epoch ms) keyed by session `cwd`. Sync only folds sessions whose
+   * lastActivityAt exceeds the cursor, so a re-run is idempotent.
+   */
+  lastSync?: Record<string, number>
 }
 
 /** KV unit descriptor for the track unit. */

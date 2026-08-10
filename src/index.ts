@@ -20,6 +20,8 @@ import type { KvFacet } from '@deepseek-ai/dsh-storage'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { TrackStore, makeId } from './store.ts'
 import type { Capture, Decision, Issue } from './types.ts'
+import { runSync } from './sync/run.ts'
+import type { SyncOptions, SyncReport, SyncDeps as SyncReportDeps } from './sync/run.ts'
 
 export const name = '@deepseek-ai/dsh-track'
 export const inject = ['tools', 'storage']
@@ -249,6 +251,64 @@ export function apply(ctx: Context, config?: Config) {
     presentCall: (args) => ({ card: 'generic', title: 'List issues', kind: 'other', rawInput: args.state ?? 'all' }),
   }))
 
+  // ---- track_sync_history: review workspace sessions → epic/issue history ----
+  // The "plugin command": folds user-initiated requests from past sessions in
+  // the current workspace into epic/issue-level candidates, aligns them with
+  // the existing store, and (after confirmation) writes them back. Requires the
+  // session-query service, which the web profile mounts; runs dry-run by
+  // default so write-back stays track-confirmed.
+  ctx.tools.register(defineTool({
+    name: 'track_sync_history',
+    description:
+      'Review past user sessions in the current workspace and sync epic/issue-level task history into the Track store. '
+      + 'Scans sessions whose cwd matches this workspace, extracts user-initiated requests, clusters them into epic/issue '
+      + 'candidates, and reconciles with existing issues (create or update). Defaults to a dry-run preview listing candidates '
+      + 'and the planned create/update actions; set dry_run=false to write back. Incremental: only folds sessions with new '
+      + 'activity since the last sync. Use when the user asks to "sync history", "整理最近的工作", or wants past sessions '
+      + 'tracked as tasks.',
+    parameters: {
+      workspace: { type: 'string', description: 'Exact workspace cwd to scan. Defaults to the current session\'s cwd.' },
+      since: { type: 'string', description: 'Only fold sessions active after this ISO timestamp or epoch-ms number. Defaults to 7 days ago.' },
+      dry_run: { type: 'boolean', description: 'Preview only — list candidates and planned actions without writing. Default true.' },
+      max_sessions: { type: 'integer', description: 'Safety cap on sessions scanned per run (default 200).' },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    async execute(args, exec) {
+      if (!exec.agent) {
+        throw new Error('track_sync_history requires an owning agent session')
+      }
+      const sessionQuery = getSessionQuery(ctx)
+      if (!sessionQuery) {
+        throw new Error('track_sync_history requires the session-query service (mounted by the web profile)')
+      }
+      const workspace = args.workspace ?? exec.agent.session.header.cwd
+      if (!workspace) {
+        throw new Error('track_sync_history needs a workspace cwd: pass workspace= or run from a session with one')
+      }
+      const since = args.since !== undefined
+        ? (/^\d+$/.test(String(args.since)) ? Number(args.since) : Date.parse(String(args.since)))
+        : undefined
+      if (since !== undefined && Number.isNaN(since)) {
+        throw new Error(`invalid since timestamp: ${String(args.since)}`)
+      }
+      const options: SyncOptions = {
+        cwd: workspace,
+        since,
+        dryRun: args.dry_run ?? true,
+        maxSessions: args.max_sessions,
+      }
+      const report: SyncReport = await runSync(
+        { sessionQuery: sessionQuery as SyncReportDeps['sessionQuery'], store },
+        options,
+      )
+      return formatSyncReport(report, options.dryRun ?? true)
+    },
+    presentCall: (args) => ({ card: 'generic', title: 'Sync session history', kind: 'other', rawInput: args.workspace ?? 'current workspace' }),
+  }))
+
   // ---- session event subscription: capture derived requirements ----
   // The engine observes session events so derived work can be surfaced, but it
   // does NOT auto-create issues — triage stays human/agent confirmed.
@@ -318,7 +378,72 @@ export function apply(ctx: Context, config?: Config) {
       await ensureStoreOpen()
       json(res, { issues: await store.listIssues() })
     })
+    registerRoute('/sync', async (req, res) => {
+      await ensureStoreOpen()
+      if (req.method !== 'POST') { json(res, { error: 'method not allowed' }, 405); return }
+      const sessionQuery = getSessionQuery(ctx)
+      if (!sessionQuery) {
+        json(res, { error: 'session-query service unavailable (web profile only)' }, 503)
+        return
+      }
+      const body = await readBody(req)
+      const workspace = typeof body.workspace === 'string' ? body.workspace : undefined
+      const since = typeof body.since === 'number' ? body.since : undefined
+      const dryRun = typeof body.dry_run === 'boolean' ? body.dry_run : true
+      const maxSessions = typeof body.max_sessions === 'number' ? body.max_sessions : undefined
+      try {
+        const report = await runSync(
+          { sessionQuery: sessionQuery as SyncReportDeps['sessionQuery'], store },
+          { cwd: workspace ?? (ctx as unknown as { workspace?: { cwd?: string } }).workspace?.cwd ?? '', since, dryRun, maxSessions },
+        )
+        json(res, { ok: true, dryRun, report })
+      } catch (e) {
+        json(res, { ok: false, error: e instanceof Error ? e.message : String(e) }, 500)
+      }
+    })
   })
 }
 
 export { store as trackStore }
+
+/**
+ * Non-throwing access to the optional session-query service. cordis proxy get
+ * throws "without inject" for undeclared services; `reflect.get(name, false)`
+ * returns the value or undefined, so the plugin still applies in host
+ * compositions that do not mount session-query (tests, headless).
+ */
+function getSessionQuery(ctx: Context): unknown {
+  const reflect = (ctx as unknown as { reflect?: { get: (name: string, strict?: boolean) => unknown } }).reflect
+  return reflect?.get('sessionQuery', false)
+}
+
+/** Render a sync report as the tool's text result. */
+function formatSyncReport(report: SyncReport, dryRun: boolean): string {
+  const mode = dryRun ? 'DRY RUN (no writes)' : 'WRITTEN'
+  const lines: string[] = [
+    `Track history sync — ${mode}`,
+    `Scanned ${report.scannedSessions} session(s), ${report.userRequests} user request(s), skipped ${report.skippedByCursor} by cursor.`,
+    `Candidates: ${report.issueCandidates.length} issue(s), ${report.epicCandidates.length} epic(s).`,
+  ]
+  if (report.issueCandidates.length === 0) {
+    lines.push('No new session activity in scope.')
+    return lines.join('\n')
+  }
+  lines.push('')
+  lines.push('Planned actions:')
+  for (const action of report.actions) {
+    if (action.kind === 'create') {
+      lines.push(`  + create ${action.candidate.title} (${action.candidate.suggestedState})`)
+    } else if (action.kind === 'update') {
+      lines.push(`  ~ update ${action.existing.identifier} ${action.existing.title} — ${action.changes.join('; ')}`)
+    } else {
+      lines.push(`  = skip ${action.existing.identifier} (${action.reason})`)
+    }
+  }
+  lines.push('')
+  lines.push(`Summary: ${report.created} create / ${report.updated} update / ${report.skipped} skip.`)
+  if (dryRun) {
+    lines.push('Run again with dry_run=false to write these changes.')
+  }
+  return lines.join('\n')
+}
