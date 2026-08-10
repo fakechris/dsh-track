@@ -97,8 +97,21 @@ describe('P0 golden eval — v1 baseline', () => {
   it('emits duplicate candidates for fork copies (no cross-session dedup)', () => {
     const forks = results.filter((r) => r.golden.label.startsWith('fork-copy'))
     expect(forks).toHaveLength(2)
-    // Both fork copies produce a candidate (v1 has no identity resolution).
+    // Both fork copies produce one candidate each (v1 has no identity
+    // resolution), even though golden says both sessions share 3 tasks.
     for (const f of forks) expect(f.issues.length).toBe(1)
+    expect(forks[0]!.golden.tasks.length).toBe(3)
+    expect(forks[1]!.golden.tasks.length).toBe(3)
+  })
+
+  it('golden intent layering: directives are evidence inside tasks, never standalone', () => {
+    // Every golden task carries intent: 'requirement'; directives appear only
+    // inside evidence[] annotations. No golden task has intent 'directive'.
+    for (const g of GOLDEN.sessions) {
+      for (const t of g.tasks ?? []) {
+        expect(t.intent, `${t.title} must be a requirement`).toBe('requirement')
+      }
+    }
   })
 
   it('v1 candidate description is a raw log dump, not a distilled summary', () => {
