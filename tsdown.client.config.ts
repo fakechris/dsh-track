@@ -1,5 +1,5 @@
 /**
- * Client bundle build for dsh-involute: emit lib/client.js in the DSH
+ * Client bundle build for dsh-track: emit lib/client.js in the DSH
  * client-modules factory shape (window.__ModuleLoader__.load, contract C6).
  * Mirrors the official clientBundle preset: cjs format (the injected require
  * resolves module-table externals), named entry `client` pinned to
@@ -16,7 +16,7 @@ export default defineConfig({
   dts: false,
   clean: false,
   // DSH client-modules contract C6: register via __ModuleLoader__.load.
-  banner: 'window.__ModuleLoader__.load({ id: "@deepseek-ai/dsh-involute", factory: (require) => { var module = { exports: {} }; var exports = module.exports;',
+  banner: 'window.__ModuleLoader__.load({ id: "@deepseek-ai/dsh-track", factory: (require) => { var module = { exports: {} }; var exports = module.exports;',
   footer: 'return module.exports; } });',
   deps: {
     neverBundle: [

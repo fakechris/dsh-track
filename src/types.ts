@@ -1,14 +1,14 @@
 /**
- * Involute Bridge data shapes — Linear-compatible issue model plus Involute's
+ * Track Bridge data shapes — Linear-compatible issue model plus Track's
  * capture/decision/link extensions. KV records keep these exact shapes so a
  * future export to a real Linear-compatible GraphQL service is a straight
- * mapping (see docs/involute-bridge-plugin-plan.md).
- * @module @deepseek-ai/dsh-involute/types
+ * mapping (see docs/track-bridge-plugin-plan.md).
+ * @module @deepseek-ai/dsh-track/types
  */
 
 /** Capture wall entry: an unstructured thought from any source. */
 export interface Capture {
-  /** Stable id: `involute_capture_<uuid>`. */
+  /** Stable id: `track_capture_<uuid>`. */
   id: string
   /** The thought itself (user's words or an agent summary). */
   content: string
@@ -34,7 +34,7 @@ export type IssuePriority = 0 | 1 | 2 | 3 | 4
 
 /** Structured work unit — mirrors Linear's Issue core fields. */
 export interface Issue {
-  /** Stable id: `involute_issue_<uuid>`. */
+  /** Stable id: `track_issue_<uuid>`. */
   id: string
   /** Linear-style identifier, e.g. `INV-12`. */
   identifier: string
@@ -54,7 +54,7 @@ export interface Issue {
   teamId: string
   /** Labels. */
   labels: string[]
-  /** Acceptance criteria — the contract field Involute owns. */
+  /** Acceptance criteria — the contract field Track owns. */
   acceptanceCriteria?: string
   /** Sessions that executed this issue (one issue, many sessions). */
   linkedSessionIds: string[]
@@ -112,25 +112,25 @@ export interface Decision {
 }
 
 /** Engine metadata stored in the KV global slot. */
-export interface InvoluteGlobal {
+export interface TrackGlobal {
   version: 1
   teams: Record<string, { id: string; name: string; cwd?: string }>
   identifierCounter: number
 }
 
-/** KV unit descriptor for the involute unit. */
-export const INVOLUTE_UNIT = {
-  name: 'involute',
+/** KV unit descriptor for the track unit. */
+export const TRACK_UNIT = {
+  name: 'track',
   version: 1,
   tables: ['captures', 'issues', 'epics', 'links', 'decisions'],
   hasGlobal: true,
 } as const
 
-// Session event declaration merge: `involute/decision` is a durable,
+// Session event declaration merge: `track/decision` is a durable,
 // whole-value session event carrying the complete decision snapshot, so
 // replay and resume recover it by last-write-wins (same rule as goal/change).
 declare module '@deepseek-ai/dsh-session' {
   interface SessionEventMap {
-    'involute/decision': Decision
+    'track/decision': Decision
   }
 }

@@ -1,5 +1,5 @@
 /**
- * Register contract test: the involute plugin registers its tools on a real
+ * Register contract test: the track plugin registers its tools on a real
  * tools registry and the store opens on a temp json backend. Keyless — no
  * model calls.
  * @module tests/register.spec
@@ -9,17 +9,17 @@ import { describe, expect, it, beforeAll, afterAll } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { InvoluteStore } from '../src/store.ts'
+import { TrackStore } from '../src/store.ts'
 
-describe('involute store', () => {
+describe('track store', () => {
   let dir: string
-  let store: InvoluteStore
+  let store: TrackStore
 
   beforeAll(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'involute-'))
+    dir = await mkdtemp(join(tmpdir(), 'track-'))
     // Use a real json backend unit via the storage-json package if resolvable;
     // otherwise the store contract is exercised through an in-memory stub.
-    store = new InvoluteStore()
+    store = new TrackStore()
   })
 
   afterAll(async () => {
@@ -35,7 +35,7 @@ describe('involute store', () => {
     // The store's KV shape is validated by the storage conformance suite;
     // here we assert the model shapes serialize as plain JSON.
     const capture = {
-      id: 'involute_capture_test',
+      id: 'track_capture_test',
       content: 'hello',
       source: 'user' as const,
       status: 'open' as const,
@@ -47,13 +47,13 @@ describe('involute store', () => {
 })
 
 function makeIdPublic(kind: 'issue'): string {
-  return `involute_${kind}_${Math.random().toString(36).slice(2)}`
+  return `track_${kind}_${Math.random().toString(36).slice(2)}`
 }
 
 describe('plugin contract', () => {
   it('exports a cordis plugin with name and inject', async () => {
     const mod = await import('../src/index.ts')
-    expect(mod.name).toBe('@deepseek-ai/dsh-involute')
+    expect(mod.name).toBe('@deepseek-ai/dsh-track')
     expect(mod.inject).toContain('tools')
     expect(mod.inject).toContain('storage')
     expect(typeof mod.apply).toBe('function')

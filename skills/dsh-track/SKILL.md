@@ -1,6 +1,6 @@
 ---
-name: dsh-involute
-description: Involute Bridge 任务管理协议。当执行中遇到不可逆/风险/范围/验收类决策、用户提到与当前工作无关的想法、或需要把工作映射为结构化任务时使用。提供决策点上报、念头捕获、issue 创建与查询的调用纪律。
+name: dsh-track
+description: Track Bridge 任务管理协议。当执行中遇到不可逆/风险/范围/验收类决策、用户提到与当前工作无关的想法、或需要把工作映射为结构化任务时使用。提供决策点上报、念头捕获、issue 创建与查询的调用纪律。
 license: BSD-3-Clause
 metadata:
   version: 0.1.0
@@ -49,9 +49,9 @@ metadata:
 - 不打断当前工作；捕获是零摩擦的，不需要用户结构化
 - 捕获后如用户明确要求落实，再考虑升级为 issue
 
-# 任务映射（involute_create_issue / involute_list_issues）
+# 任务映射（track_create_issue / track_list_issues）
 
-- 一个念头/衍生需求要变成具体工作时：involute_create_issue（给 title、描述、验收标准、优先级）
-- 查已有任务避免重复：先 involute_list_issues 再创建
-- 任务状态以 Involute 为权威（契约字段：验收标准/优先级/依赖）；session 内 todo 是执行细节
+- 一个念头/衍生需求要变成具体工作时：track_create_issue（给 title、描述、验收标准、优先级）
+- 查已有任务避免重复：先 track_list_issues 再创建
+- 任务状态以 Track 为权威（契约字段：验收标准/优先级/依赖）；session 内 todo 是执行细节
 - 衍生需求（前置依赖、跨项目 bug、"顺便做 X"）先识别、建议归属，经用户确认再创建，不自动落 issue

@@ -1,23 +1,23 @@
 /**
- * Involute right-side panel mounting — the lazyfish/side-panel pattern:
+ * Track right-side panel mounting — the lazyfish/side-panel pattern:
  * locate the conversation container, take over its grid as
  * `grid-template-columns: minmax(0,2fr) minmax(0,1fr)` (conversation 2/3 +
- * panel 1/3, draggable), and mount the Involute panel at grid-column 2.
+ * panel 1/3, draggable), and mount the Track panel at grid-column 2.
  * A floating toggle button (FAB) shows when the panel is closed.
  *
  * This is the right-side sidebar the user asked for — not a full-screen
  * overlay (which the previous implementation wrongly did).
- * @module @deepseek-ai/dsh-involute/client/right-panel
+ * @module @deepseek-ai/dsh-track/client/right-panel
  */
 
 import type { Capture, Decision, Issue } from '../types.ts'
 
 /** Stable ids for the injected panel and toggle. */
-export const PANEL_ID = 'dsh-involute-panel'
-export const FAB_ID = 'dsh-involute-fab'
+export const PANEL_ID = 'dsh-track-panel'
+export const FAB_ID = 'dsh-track-fab'
 
-const OPEN_KEY = 'dsh.involute.open'
-const WIDTH_KEY = 'dsh.involute.width'
+const OPEN_KEY = 'dsh.track.open'
+const WIDTH_KEY = 'dsh.track.width'
 
 /** ---- data fetching (host HTTP API) ---- */
 
@@ -31,9 +31,9 @@ const EMPTY: Snapshot = { captures: [], decisions: [], issues: [] }
 
 async function fetchSnapshot(): Promise<Snapshot> {
   const [c, d, i] = await Promise.all([
-    fetch('/api/involute/captures').then((r) => r.json()).catch(() => ({ captures: [] })),
-    fetch('/api/involute/decisions').then((r) => r.json()).catch(() => ({ decisions: [] })),
-    fetch('/api/involute/issues').then((r) => r.json()).catch(() => ({ issues: [] })),
+    fetch('/api/track/captures').then((r) => r.json()).catch(() => ({ captures: [] })),
+    fetch('/api/track/decisions').then((r) => r.json()).catch(() => ({ decisions: [] })),
+    fetch('/api/track/issues').then((r) => r.json()).catch(() => ({ issues: [] })),
   ])
   return {
     captures: c.captures ?? [],
@@ -47,7 +47,7 @@ async function fetchSnapshot(): Promise<Snapshot> {
 function buildPanelHtml(): string {
   return `
   <div class="inv-head">
-    <span class="inv-title">Involute</span>
+    <span class="inv-title">Track</span>
     <button class="inv-refresh" title="刷新">⟳</button>
     <button class="inv-close" title="收起">×</button>
   </div>
@@ -256,8 +256,8 @@ function refresh(): void {
 }
 
 function restoreLayout(): void {
-  involuteTab?.remove()
-  involuteTab = null
+  trackTab?.remove()
+  trackTab = null
   if (host === null) return
   host.candidate.classList.remove('inv-host')
   if (host.header !== null) host.header.classList.remove('inv-host-header')
@@ -271,7 +271,7 @@ function setPanelOpen(open: boolean): void {
   panelOpen = open
   if (panel !== null) panel.hidden = !open
   if (fab !== null) fab.hidden = open
-  if (involuteTab !== null) involuteTab.setAttribute('aria-selected', String(!open))
+  if (trackTab !== null) trackTab.setAttribute('aria-selected', String(!open))
   try { localStorage.setItem(OPEN_KEY, open ? '1' : '0') } catch { /* ignore */ }
   if (open) syncGrid()
   else if (host !== null) restoreLayout()
@@ -305,15 +305,15 @@ function attach(candidate: HTMLElement, header: HTMLElement | null): void {
     if (panel.isConnected) panel.remove()
     candidate.append(panel)
   }
-  // side-panel pattern: append an "Involute" tab to the session tab strip so
+  // side-panel pattern: append an "Track" tab to the session tab strip so
   // the panel has a native tab entry (like Trajectory / goal tabs).
   mountTab()
   syncGrid()
 }
 
-let involuteTab: HTMLButtonElement | null = null
+let trackTab: HTMLButtonElement | null = null
 
-/** Append an Involute tab to the conversation tab strip (side-panel pattern). */
+/** Append an Track tab to the conversation tab strip (side-panel pattern). */
 function mountTab(): void {
   const tl = host?.tablist
   if (tl === null || tl === undefined) return
@@ -326,12 +326,12 @@ function mountTab(): void {
   tab.role = 'tab'
   tab.className = `${reference.className} inv-tab`
   const label = document.createElement('span')
-  label.textContent = 'Involute'
+  label.textContent = 'Track'
   tab.append(label)
   tab.setAttribute('aria-selected', String(!panelOpen))
   tab.addEventListener('click', () => { setPanelOpen(!panelOpen) })
   tl.append(tab)
-  involuteTab = tab
+  trackTab = tab
 }
 
 function locateHost(): HostRefs | null {
@@ -408,7 +408,7 @@ export function mountRightPanel(): () => void {
   fab = document.createElement('button')
   fab.id = FAB_ID
   fab.type = 'button'
-  fab.title = 'Involute'
+  fab.title = 'Track'
   fab.textContent = '◆'
   fab.hidden = false
   document.body.appendChild(fab)
@@ -421,7 +421,7 @@ export function mountRightPanel(): () => void {
   const doCapture = (): void => {
     const content = inputEl?.value.trim()
     if (!content) return
-    void fetch('/api/involute/captures', {
+    void fetch('/api/track/captures', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ content, tags: [] }),

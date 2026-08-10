@@ -1,13 +1,13 @@
 /**
- * InvoluteStrip: the composer-dock strip surfacing decision-point and
+ * TrackStrip: the composer-dock strip surfacing decision-point and
  * capture-wall state. Styles are inline (no CSS modules) so the client
  * bundle needs no CSS pipeline.
- * @module @deepseek-ai/dsh-involute/client/strip
+ * @module @deepseek-ai/dsh-track/client/strip
  */
 
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
-import type { InvoluteStripProps } from './strip-contract.ts'
-import type { InvoluteKey } from './locales.ts'
+import type { TrackStripProps } from './strip-contract.ts'
+import type { TrackKey } from './locales.ts'
 
 const style = {
   strip: {
@@ -35,12 +35,12 @@ const style = {
   empty: { opacity: 0.55, fontStyle: 'italic' } as const,
 }
 
-/** Involute strip component: label + pending decision / capture counts. */
-export function InvoluteStrip({ decisions, captures, t }: InvoluteStripProps & PropsLocale<'involute'>) {
+/** Track strip component: label + pending decision / capture counts. */
+export function TrackStrip({ decisions, captures, t }: TrackStripProps & PropsLocale<'track'>) {
   const hasWork = decisions > 0 || captures > 0
   const plural = (n: number) => (n === 1 ? '' : 's')
   return (
-    <button type="button" style={style.strip} data-testid="involute-strip">
+    <button type="button" style={style.strip} data-testid="track-strip">
       <span style={style.label}>{t('strip.label')}</span>
       {hasWork ? (
         <span>

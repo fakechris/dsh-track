@@ -1,6 +1,6 @@
 /**
  * Integration smoke: mount a real storage hub + json backend + tools registry,
- * apply the involute plugin, and assert the four tools register and the
+ * apply the track plugin, and assert the four tools register and the
  * store round-trips through an actual json unit on disk.
  * @module tests/integration.spec
  */
@@ -14,24 +14,24 @@ import Storage from '@deepseek-ai/dsh-storage'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRegistry from '@deepseek-ai/dsh-tools'
 import { apply as applyStorageJson } from '@deepseek-ai/dsh-storage-json'
-import { apply as applyInvolute } from '../src/index.ts'
-import { involuteStore, store } from '../src/index.ts'
+import { apply as applyTrack } from '../src/index.ts'
+import { trackStore, store } from '../src/index.ts'
 
-describe('involute integration with real storage', () => {
+describe('track integration with real storage', () => {
   let ctx: Context
   let dir: string
 
   beforeAll(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'involute-int-'))
+    dir = await mkdtemp(join(tmpdir(), 'track-int-'))
     ctx = new Context()
     // Mount the service chain: storage hub → system-prompt → tool registry.
-    // Apply involute BEFORE the json backend registers — the web boot mounts
+    // Apply track BEFORE the json backend registers — the web boot mounts
     // storage-json concurrently with this plugin, and resolveKv must poll for
     // the backend instead of failing on the first (empty) check.
     await ctx.plugin(Storage)
     await ctx.plugin(SystemPrompt)
     await ctx.plugin(ToolRegistry)
-    applyInvolute(ctx, { teamKey: 'INV' } as never)
+    applyTrack(ctx, { teamKey: 'INV' } as never)
     await new Promise((r) => setTimeout(r, 300))
     expect(store.isOpen).toBe(false)
     applyStorageJson(ctx, { root: dir })
@@ -43,7 +43,7 @@ describe('involute integration with real storage', () => {
     await rm(dir, { recursive: true, force: true })
   })
 
-  it('opens the involute kv unit on the json backend', async () => {
+  it('opens the track kv unit on the json backend', async () => {
     // The plugin polls for the backend on a 200ms tick, so wait for the open
     // instead of a fixed sleep.
     const deadline = Date.now() + 5000
@@ -53,21 +53,21 @@ describe('involute integration with real storage', () => {
     expect(store.isOpen).toBe(true)
   })
 
-  it('registers the four involute tools on ctx.tools', () => {
+  it('registers the four track tools on ctx.tools', () => {
     const registry = ctx.tools as unknown as { get: (name: string) => unknown }
-    for (const name of ['capture_thought', 'report_decision_point', 'involute_create_issue', 'involute_list_issues']) {
+    for (const name of ['capture_thought', 'report_decision_point', 'track_create_issue', 'track_list_issues']) {
       expect(registry.get(name), `tool ${name} should be registered`).toBeDefined()
     }
   })
 
   it('round-trips a capture and mints an identifier through the real unit', async () => {
-    const id = await involuteStore.nextIdentifier('INV')
+    const id = await trackStore.nextIdentifier('INV')
     expect(id).toMatch(/^INV-\d+$/)
   })
 
   it('writes a capture to the real json unit on disk and reads it back', async () => {
-    const id = 'involute_capture_e2e_check'
-    await involuteStore.upsertCapture({
+    const id = 'track_capture_e2e_check'
+    await trackStore.upsertCapture({
       id,
       content: 'end-to-end check',
       source: 'user',
@@ -75,7 +75,7 @@ describe('involute integration with real storage', () => {
       tags: [],
       createdAt: new Date().toISOString(),
     })
-    const caps = await involuteStore.listCaptures()
+    const caps = await trackStore.listCaptures()
     expect(caps.some((c) => c.id === id)).toBe(true)
     expect(store.isOpen).toBe(true)
   })

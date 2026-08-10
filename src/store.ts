@@ -1,34 +1,34 @@
 /**
- * InvoluteStore — the single data face of the Involute Bridge engine.
+ * TrackStore — the single data face of the Track Bridge engine.
  *
- * Wraps one `ctx.storage` KV unit (`involute`) with typed CRUD over
+ * Wraps one `ctx.storage` KV unit (`track`) with typed CRUD over
  * captures / issues / epics / links / decisions. The KV contract puts write
  * ordering on the caller, so every mutation funnels through one serialized
  * write chain per table (a simple in-flight promise queue).
  *
  * Storage is host-side only: the model never touches this store directly;
  * model-facing tools registered in index.ts are the only entry points.
- * @module @deepseek-ai/dsh-involute/store
+ * @module @deepseek-ai/dsh-track/store
  */
 
 import type { KvFacet, KvUnit, KvUnitDescriptor } from '@deepseek-ai/dsh-storage'
 import {
-  INVOLUTE_UNIT,
+  TRACK_UNIT,
   type Capture,
   type Decision,
   type Epic,
-  type InvoluteGlobal,
+  type TrackGlobal,
   type Issue,
   type Link,
 } from './types.ts'
 
 /** Branded identifier prefixes keep record ids recognizable and collision-free. */
 export const ID_PREFIX = {
-  capture: 'involute_capture_',
-  issue: 'involute_issue_',
-  epic: 'involute_epic_',
-  link: 'involute_link_',
-  decision: 'involute_decision_',
+  capture: 'track_capture_',
+  issue: 'track_issue_',
+  epic: 'track_epic_',
+  link: 'track_link_',
+  decision: 'track_decision_',
 } as const
 
 /** Random id with the given brand prefix. */
@@ -40,13 +40,13 @@ export function makeId(kind: keyof typeof ID_PREFIX): string {
 /** One serialized write chain per table keeps KV ordering sane. */
 type WriteChain = Promise<unknown>
 
-export class InvoluteStore {
+export class TrackStore {
   private unit!: KvUnit
   private chains: Record<string, WriteChain> = {}
   private opened = false
   private openPromise: Promise<void> | null = null
 
-  constructor(private readonly descriptor: KvUnitDescriptor = INVOLUTE_UNIT) {}
+  constructor(private readonly descriptor: KvUnitDescriptor = TRACK_UNIT) {}
 
   /** Open the unit on a kv facet (json or sqlite backend). Call once at plugin apply. */
   open(kvFacet: KvFacet): Promise<void> {
@@ -64,7 +64,7 @@ export class InvoluteStore {
       await this.openPromise
       return
     }
-    throw new Error('involute: store is not open — the plugin did not complete initialization')
+    throw new Error('track: store is not open — the plugin did not complete initialization')
   }
 
   get isOpen(): boolean {
@@ -89,13 +89,13 @@ export class InvoluteStore {
 
   // ---- global ----
 
-  async readGlobal(): Promise<InvoluteGlobal | null> {
+  async readGlobal(): Promise<TrackGlobal | null> {
   await this.ready()
-    const g = await this.unit.loadAll().then(({ global }) => global as InvoluteGlobal | null)
+    const g = await this.unit.loadAll().then(({ global }) => global as TrackGlobal | null)
     return g
   }
 
-  async writeGlobal(g: InvoluteGlobal): Promise<void> {
+  async writeGlobal(g: TrackGlobal): Promise<void> {
   await this.ready()
     await this.chain('__global', () => this.unit.setGlobal(g))
   }
