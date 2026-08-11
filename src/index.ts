@@ -23,6 +23,8 @@ import type { Capture, Decision, Issue, LlmUsageRecord } from './types.ts'
 import { runSync } from './sync/run.ts'
 import { createAutoSync } from './sync/auto.ts'
 import { createAutoCapture } from './capture/observe.ts'
+import { backfillCaptureContext } from './capture/backfill.ts'
+import { latestUserRequest, type ContextSessionQuery } from './capture/context.ts'
 import { setUsageRecorder } from './sync/llm.ts'
 import { createUsageRecorder, formatUsageReport, summarizeUsage } from './usage.ts'
 import type { SyncOptions, SyncReport, SyncDeps as SyncReportDeps } from './sync/run.ts'
@@ -90,7 +92,7 @@ export function apply(ctx: Context, config?: Config) {
   // Observability: one audit row per model-facing tool call so funnel
   // questions are answered by the store, not by session-log archaeology.
   // Fire-and-forget: audit must never break the tool's real work.
-  const audit = (tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history' | 'track_usage', exec: { agent?: { id?: string } }, ok: boolean, detail?: string): void => {
+  const audit = (tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history' | 'track_usage' | 'track_backfill_captures', exec: { agent?: { id?: string } }, ok: boolean, detail?: string): void => {
     void ensureStoreOpen()
       .then(() => store.appendAudit({
         id: makeId('audit'),
@@ -383,6 +385,38 @@ export function apply(ctx: Context, config?: Config) {
     presentCall: (args) => ({ card: 'generic', title: 'Track LLM usage', kind: 'other', rawInput: args.since ?? 'all time' }),
   }))
 
+  // ---- track_backfill_captures: one-shot context migration for legacy captures ----
+  // Captures created before the motivation-context work (PR #20) have no
+  // `context`, so C2/C3 (context-based fold) cannot map them. This tool fills
+  // each open capture's context from its source session log (most recent
+  // explicit user request). Idempotent and safe to re-run.
+  ctx.tools.register(defineTool({
+    name: 'track_backfill_captures',
+    description:
+      'Backfill motivation context on legacy open captures. Captures created before '
+      + 'the motivation-context feature have no context field, so context-based issue '
+      + 'mapping (C2/C3) cannot fold them. Reads each open capture\'s source session log '
+      + 'and writes the most recent explicit user request as its context. Idempotent: '
+      + 'skips captures that already have context. Use after upgrading an older store, '
+      + 'or when the capture wall shows many context-less entries.',
+    parameters: {},
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    async execute(_args, exec) {
+      await ensureStoreOpen()
+      const sessionQuery = getSessionQuery(ctx) as ContextSessionQuery | undefined
+      const result = await backfillCaptureContext(store, sessionQuery)
+      audit('track_backfill_captures', exec, true, `${result.filled} filled, ${result.skipped} skipped`)
+      return (
+        `Capture context backfill — ${result.scanned} legacy open capture(s) inspected.\n`
+        + `Filled ${result.filled}, skipped ${result.skipped} (no explicit user request in session log).`
+      )
+    },
+    presentCall: () => ({ card: 'generic', title: 'Backfill capture contexts', kind: 'other', rawInput: 'all legacy open captures' }),
+  }))
+
   // ---- session event subscription: capture derived requirements ----
   // The engine observes session events so derived work can be surfaced, but it
   // does NOT auto-create issues — triage stays human/agent confirmed. Phase 0b:
@@ -414,25 +448,7 @@ export function apply(ctx: Context, config?: Config) {
     // PREVIOUS process, so the observer's in-memory cache is empty. Backfill
     // the most recent explicit user request per session (observe.ts seeds
     // lazily on first signal).
-    const seedContext = async (sessionId: string): Promise<string | undefined> => {
-      const sessionQuery = getSessionQuery(ctx)
-      if (!sessionQuery) return undefined
-      try {
-        const snapshot = await (sessionQuery as { readSession(id: string): Promise<{ events: Array<{ type: string; data?: { content?: Array<{ type?: string; text?: string }>; source?: { kind?: string } } }> }> }).readSession(sessionId)
-        for (const event of [...snapshot.events].reverse()) {
-          if (event.type !== 'user/message') continue
-          const source = event.data?.source
-          if (source?.kind !== 'user') continue
-          const text = (event.data?.content ?? [])
-            .filter((c) => c.type === 'text')
-            .map((c) => c.text ?? '')
-            .join('')
-            .trim()
-          if (text) return text
-        }
-      } catch { /* best-effort */ }
-      return undefined
-    }
+    const seedContext = (sessionId: string) => latestUserRequest(getSessionQuery(ctx) as ContextSessionQuery | undefined, sessionId)
     const disposeAutoCapture = createAutoCapture(ctx, { store, seedContext })
     return () => disposeAutoCapture()
   })
