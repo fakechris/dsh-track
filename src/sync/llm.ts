@@ -25,7 +25,8 @@ export interface LlmLike {
 }
 
 /** Resolve the llm service non-throwingly (same pattern as sessionQuery). */
-export function getLlm(ctx: Context): LlmLike | undefined {
+export function getLlm(ctx: Context | undefined): LlmLike | undefined {
+  if (!ctx) return undefined
   const reflect = (ctx as unknown as { reflect?: { get: (name: string, strict?: boolean) => unknown } }).reflect
   return reflect?.get('llm', false) as LlmLike | undefined
 }
@@ -97,7 +98,10 @@ export async function llmJson(
     model: opts.model,
     system: opts.system,
     messages: [userMessage(opts.prompt)],
-    maxTokens: opts.maxTokens ?? 800,
+    // deepseek-v4-flash is a reasoning model: reasoning tokens consume part of
+    // maxTokens, so give enough budget for reasoning + JSON output (verified:
+    // 500 is fully eaten by reasoning on longer Chinese inputs).
+    maxTokens: opts.maxTokens ?? 2000,
     temperature: opts.temperature ?? 0.2,
     signal: opts.signal,
     purpose: opts.purpose as GenerateOptions['purpose'],

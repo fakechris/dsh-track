@@ -13,6 +13,8 @@
 import type { Context } from 'cordis'
 import type { EvidenceSpan } from './segment.ts'
 import { getLlm, llmJson } from './llm.ts'
+import type { Issue } from '../types.ts'
+import type { IssueCandidate } from './cluster.ts'
 
 export type CandidateKind = 'investigation' | 'bug' | 'implementation' | 'refactor' | 'docs' | 'ops' | 'decision' | 'question' | 'follow_up' | 'non_task'
 
@@ -124,7 +126,7 @@ export async function synthesizeCandidate(
     system: CANDIDATE_SYSTEM,
     prompt: `${context}Session evidence span (${opts.span.seqStart}..${opts.span.seqEnd}):\n${requests}\n\nSynthesize ONE task candidate.`,
     requiredKeys: ['kind', 'title'],
-    maxTokens: 700,
+    maxTokens: 2000,
     temperature: 0.2,
     purpose: 'session-title',
   })
@@ -166,4 +168,39 @@ export async function synthesizeCandidate(
     decidedBy: 'model',
     requests: opts.span.requests,
   })
+}
+
+/**
+ * Project a TaskCandidate to the v1 IssueCandidate shape (v2-design §2 stage ⑦).
+ *
+ * The projection is lossy by design: it flattens the v2 candidate (kind,
+ * goal, deliverable, AC list) into the store's Linear-compatible Issue shape.
+ * `suggestedState` derives from kind: non_task candidates should never reach
+ * the store, and bug/implementation candidates lean in_progress while pure
+ * investigations stay todo unless tool evidence exists.
+ */
+export function projectToIssueCandidate(c: TaskCandidate, teamKey = 'INV'): IssueCandidate {
+  const goal = c.goal ? `目标：${c.goal}\n` : ''
+  const deliverable = c.deliverable ? `交付物：${c.deliverable}\n` : ''
+  const ac = c.acceptanceCriteria.length
+    ? `验收：\n${c.acceptanceCriteria.map((a, i) => `${i + 1}. [${a.source}/${a.authority}] ${a.text}`).join('\n')}`
+    : ''
+  const description = [goal, deliverable, ac].filter(Boolean).join('\n') || c.requests.join('\n')
+  const suggestedState: Issue['state'] =
+    c.kind === 'non_task' ? 'canceled'
+    : c.kind === 'bug' || c.kind === 'implementation' ? 'in_progress'
+    : 'todo'
+  return {
+    key: c.id,
+    sessionId: c.sessionId,
+    title: c.title,
+    description,
+    priority: 2,
+    suggestedState,
+    labels: [c.kind, `confidence-${Math.round(c.confidence * 100)}`],
+    linkedSessionIds: [c.sessionId],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    epicKey: `theme_${c.sessionId}`,
+  }
 }

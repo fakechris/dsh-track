@@ -11,11 +11,16 @@
  */
 
 import type { SessionQueryService } from '@deepseek-ai/dsh-session-query'
+import type { Context } from 'cordis'
 import type { TrackStore } from '../store.ts'
 import type { Issue } from '../types.ts'
 import { alignCandidates, mergeIntoIssue, type IssueAction } from './align.ts'
 import { clusterWorklogs, normalizeTitle, type EpicCandidate, type IssueCandidate } from './cluster.ts'
 import { extractWorklog } from './extract.ts'
+import { normalizeLog } from './raw-event.ts'
+import { segmentByRules, type EvidenceSpan } from './segment.ts'
+import { resolveSpanIntent } from './intent.ts'
+import { candidateFromSpan, synthesizeCandidate, projectToIssueCandidate, type TaskCandidate } from './candidate.ts'
 
 /** Sync scope and write-back control. */
 export interface SyncOptions {
@@ -27,6 +32,12 @@ export interface SyncOptions {
   dryRun?: boolean
   /** Safety cap on sessions scanned per run. */
   maxSessions?: number
+  /**
+   * Extraction engine. 'v1' = extract→cluster→align (original); 'v2' =
+   * normalize→segment→intent→synthesize→project→align (v2 evidence-to-work
+   * pipeline). Default 'v1' for backward compatibility.
+   */
+  engine?: 'v1' | 'v2'
 }
 
 /** Structured result of one sync run. */
@@ -55,22 +66,32 @@ export interface SyncDeps {
   store: TrackStore
   /** Optional refiner hook (LLM enhancement, P4); default identity. */
   refine?: (candidates: IssueCandidate[], epics: EpicCandidate[]) => Promise<{ issues: IssueCandidate[]; epics: EpicCandidate[] }>
+  /** Cordis context — required for the v2 engine's LLM calls (getLlm). */
+  ctx?: Context
 }
 
 const DEFAULT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
+/** LLM route used by the v2 engine (provider/model from the harness llm service). */
+const V2_ROUTE = { provider: 'deepseek-official', model: 'deepseek-v4-flash' }
 
 /**
  * Run one sync pass.
  *
- * Pipeline: filterSessions(cwd) → readSession+readTitle per session →
+ * Pipeline (v1): filterSessions(cwd) → readSession+readTitle per session →
  * extractWorklog → clusterWorklogs → alignCandidates → dry-run report or
  * write-back (upsert issues/epics + advance the cursor).
+ *
+ * Pipeline (v2, engine:'v2'): …→ normalizeLog → segmentByRules →
+ * intent-layering per span (LLM, drops directives) → synthesizeCandidate
+ * (LLM) or candidateFromSpan (downgrade) → projectToIssueCandidate →
+ * alignCandidates → same report/write-back.
  */
 export async function runSync(deps: SyncDeps, options: SyncOptions): Promise<SyncReport> {
-  const { sessionQuery, store, refine } = deps
+  const { sessionQuery, store, refine, ctx } = deps
   const dryRun = options.dryRun ?? true
   const since = options.since ?? Date.now() - DEFAULT_WINDOW_MS
   const maxSessions = options.maxSessions ?? 200
+  const engine = options.engine ?? 'v1'
 
   // ---- 1. enumerate sessions in this workspace ----
   const records = await sessionQuery.filterSessions([{ kind: 'cwd', values: [options.cwd] }])
@@ -104,14 +125,52 @@ export async function runSync(deps: SyncDeps, options: SyncOptions): Promise<Syn
 
   const userRequests = worklogs.reduce((n, w) => n + w.requests.length, 0)
 
-  // ---- 3. cluster ----
-  let { epics, issues } = clusterWorklogs(worklogs, metas)
+  // ---- 3. cluster / segment ----
+  let epics: EpicCandidate[] = []
+  let issues: IssueCandidate[] = []
 
-  // ---- 3b. optional refiner (LLM) ----
-  if (refine) {
-    const refined = await refine(issues, epics)
-    issues = refined.issues
-    epics = refined.epics
+  if (engine === 'v2') {
+    // v2: normalize → segment → intent → synthesize → project
+    const projected: IssueCandidate[] = []
+    for (const record of records.slice(0, maxSessions)) {
+      const snapshot = await sessionQuery.readSession(record.header.id)
+      const lastActivity = snapshot.events.at(-1)?.time ?? 0
+      if (lastActivity <= Math.max(since, cursor)) continue
+      const raws = normalizeLog(record.header.id, snapshot.events, snapshot.session)
+      const spans = segmentByRules(record.header.id, raws)
+      for (const span of spans) {
+        // Intent layering: drop directives/interruptions unless they state a goal.
+        // Segment-level judgement (all requests, not just the lead) so a span
+        // mixing a directive with a real requirement keeps the requirement.
+        // Degrades to the rule pre-filter on the span lead when no LLM.
+        const intent = await resolveSpanIntent(ctx, span, {
+          provider: V2_ROUTE.provider,
+          model: V2_ROUTE.model,
+        })
+        if (intent.intent === 'directive') continue
+        if (intent.intent === 'interruption' && intent.confidence >= 0.7) continue
+        // Synthesize (LLM) or fall back to the rule candidate.
+        let candidate: TaskCandidate | undefined
+        if (ctx) {
+          candidate = await synthesizeCandidate(ctx, { ...V2_ROUTE, span })
+        }
+        candidate ??= candidateFromSpan(span)
+        if (candidate.kind === 'non_task') continue
+        projected.push(projectToIssueCandidate(candidate))
+      }
+    }
+    issues = projected
+  } else {
+    // v1: one issue per session, clustered by title.
+    const clustered = clusterWorklogs(worklogs, metas)
+    epics = clustered.epics
+    issues = clustered.issues
+    // 3b. optional refiner (LLM)
+    if (refine) {
+      const refined = await refine(issues, epics)
+      issues = refined.issues
+      epics = refined.epics
+    }
   }
 
   // ---- 4. align against existing store ----
