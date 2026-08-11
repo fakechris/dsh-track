@@ -4,34 +4,39 @@
  * The model-facing `capture_thought` tool depends on the agent's judgment,
  * which in practice almost never fires (measured ~1/148 in 62 sessions). This
  * observer instead watches the *structured tool stream* (session/event) for
- * two signals that are reliable by construction, with zero model cost:
+ * ONE signal that is reliable by construction, with zero model cost:
  *
  *  - todo_write (planning path): an agent that plans a work unit issues a
  *    todo_write whose FIRST entry is the requirement summary. Only the first
  *    change of the first entry captures once (B — a later refresh is the same
  *    requirement's execution, not a new thought).
- *  - git branch creation (execution path): `git worktree add -b`, `git
- *    checkout -b`, `git switch -c` carry the requirement in the branch name
- *    ("feat/track-observability").
  *
- * Both are exact pattern matches on structured fields — no LLM, no semantic
- * guesswork, no per-message cost. Captures land with `source: 'session'` and
- * an `auto:*` tag so they are distinguishable from explicit `capture_thought`
+ * Git branch creation was REMOVED as a signal (2026-08-11): "新建分支 feat/…"
+ * is an execution carrier, not a requirement — in practice it dominated the
+ * capture wall with noise (9 of 17 captures) even when context was attached.
+ * The todo_write signal covers the same work lines with the requirement's
+ * own wording.
+ *
+ * Exact pattern match on structured fields — no LLM, no semantic guesswork,
+ * no per-message cost. Captures land with `source: 'session'` and an
+ * `auto:*` tag so they are distinguishable from explicit `capture_thought`
  * calls.
  *
  * Motivation context (A): every capture carries `context` = the most recent
- * explicit user request (user/message with source.kind === 'user') in the
- * session, so an execution-level capture ("调研 StreamChunk usage/token 字段")
- * keeps its "why" ("做一个模块记录所有 llm 数据计算开销"). The observer keeps
- * a per-session one-entry cache of the latest user request.
+ * FULL user instruction (user/message with source.kind === 'user', skipping
+ * terse acks — see capture/context.ts), so an execution-level capture
+ * ("调研 StreamChunk usage/token 字段") keeps its "why" ("做一个模块记录所有
+ * llm 数据计算开销"). The observer keeps a per-session one-entry cache of the
+ * latest full user request.
  *
- * Reentrancy: our own appends (track/* events) never match the two signals.
+ * Reentrancy: our own appends (track/* events) never match the signal.
  * @module @deepseek-ai/dsh-track/capture/observe
  */
 
 import type { Context } from 'cordis'
 import { makeId } from '../store.ts'
 import type { TrackStore } from '../store.ts'
+import { isShortAck } from './context.ts'
 
 /** Signals the observer reacts to, for testability and logging. */
 export interface AutoCaptureOptions {
@@ -40,11 +45,6 @@ export interface AutoCaptureOptions {
 }
 
 const DEFAULT_TAG = 'auto'
-
-/** `git checkout -b <name>` / `git switch -c <name>` / `git worktree add -b <name>`. */
-const BRANCH_RE = /\bgit\s+(?:worktree\s+add\s+-b|checkout\s+-b|switch\s+-c)\s+([A-Za-z0-9._/-]+)/
-/** Branch names we never capture (housekeeping). */
-const SKIP_BRANCH = new Set(['main', 'master', 'develop'])
 
 /** One tool/call event's data (arguments arrive as a JSON string). */
 interface ToolCallData {
@@ -78,9 +78,7 @@ export function createAutoCapture(ctx: Context, deps: { store: TrackStore; seedC
   const tag = options.tag ?? DEFAULT_TAG
   /** sessionId → captured (todo_write dedup: first change of first entry per session). */
   const todoSeen = new Set<string>()
-  /** branch → captured (git dedup: each branch name once, globally). */
-  const branchSeen = new Set<string>()
-  /** sessionId → most recent explicit user request (motivation context, A). */
+  /** sessionId → most recent FULL user instruction (motivation context, A). */
   const lastUserRequest = new Map<string, string>()
   /** sessionIds already seeded from the persisted log (or attempted). */
   const seeded = new Set<string>()
@@ -112,9 +110,11 @@ export function createAutoCapture(ctx: Context, deps: { store: TrackStore; seedC
   const onEvent = (session: unknown, event: { type: string; data?: unknown }): void => {
     const sessionId = (session as { id?: string } | undefined)?.id
 
-    // Track the most recent explicit user request as motivation context (A).
+    // Track the most recent FULL user instruction as motivation context (A).
     // MUST run before pre-warm so a live user/message fills the cache and the
     // seed (persisted log) is not consulted for an already-warm session.
+    // Terse acks ("可以", "pr merge") are skipped — they are acknowledgements,
+    // not motivation; an earlier full instruction stays the context.
     if (event.type === 'user/message') {
       const data = event.data as UserMessageData | undefined
       const kind = data?.source?.kind
@@ -124,7 +124,7 @@ export function createAutoCapture(ctx: Context, deps: { store: TrackStore; seedC
           .map((c) => c.text ?? '')
           .join('')
           .trim()
-        if (text) lastUserRequest.set(sessionId, text.slice(0, 200))
+        if (text && !isShortAck(text)) lastUserRequest.set(sessionId, text.slice(0, 200))
       }
       return
     }
@@ -149,23 +149,6 @@ export function createAutoCapture(ctx: Context, deps: { store: TrackStore; seedC
       } catch { /* malformed arguments — skip */ }
       if (first && first.trim()) {
         capture(sessionId, first.trim(), [tag, 'todo'], context)
-      }
-      return
-    }
-
-    if (data.name === 'bash') {
-      let command = ''
-      try {
-        const parsed = JSON.parse(data.arguments ?? '{}') as { command?: string }
-        command = parsed.command ?? ''
-      } catch { /* malformed arguments — skip */ }
-      const match = BRANCH_RE.exec(command)
-      if (match) {
-        const branch = match[1]!
-        if (!branchSeen.has(branch) && !SKIP_BRANCH.has(branch)) {
-          branchSeen.add(branch)
-          capture(sessionId, `新建分支 ${branch}`, [tag, 'git-branch'], context)
-        }
       }
     }
   }

@@ -29,26 +29,52 @@ const cap = (id: string, extra: any = {}) => ({
 })
 
 describe('latestUserRequestFromEvents', () => {
-  it('returns the most recent explicit user request', () => {
+  it('returns the most recent full user instruction', () => {
     const events = [
-      { type: 'user/message', data: { content: [{ type: 'text', text: '第一个请求' }], source: { kind: 'user' } } },
-      { type: 'user/message', data: { content: [{ type: 'text', text: '第二个请求' }], source: { kind: 'user' } } },
+      { type: 'user/message', data: { content: [{ type: 'text', text: '请分析 dsh 仓库的整体结构' }], source: { kind: 'user' } } },
+      { type: 'user/message', data: { content: [{ type: 'text', text: '再深入看下 context 组装和 memory 管理' }], source: { kind: 'user' } } },
       { type: 'tool/call', data: { name: 'bash', arguments: '{}' } },
     ]
-    expect(latestUserRequestFromEvents(events)).toBe('第二个请求')
+    expect(latestUserRequestFromEvents(events)).toBe('再深入看下 context 组装和 memory 管理')
+  })
+
+  it('skips terse acknowledgements and keeps scanning to the full instruction', () => {
+    // "可以" / "pr merge" / "CA先做" are acks, not motivation — the context
+    // must be the full instruction that stated the goal.
+    const events = [
+      { type: 'user/message', data: { content: [{ type: 'text', text: '做一个模块，记录所有 track 发起的 llm 数据，计算开销' }], source: { kind: 'user' } } },
+      { type: 'user/message', data: { content: [{ type: 'text', text: '可以' }], source: { kind: 'user' } } },
+      { type: 'user/message', data: { content: [{ type: 'text', text: 'pr merge' }], source: { kind: 'user' } } },
+    ]
+    expect(latestUserRequestFromEvents(events)).toBe('做一个模块，记录所有 track 发起的 llm 数据，计算开销')
+  })
+
+  it('a short request with sentence punctuation is still a full instruction', () => {
+    const events = [
+      { type: 'user/message', data: { content: [{ type: 'text', text: '继续？' }], source: { kind: 'user' } } },
+    ]
+    expect(latestUserRequestFromEvents(events)).toBe('继续？')
   })
 
   it('ignores non-user sources (plugin/system injections)', () => {
     const events = [
-      { type: 'user/message', data: { content: [{ type: 'text', text: '系统注入' }], source: { kind: 'plugin' } } },
-      { type: 'user/message', data: { content: [{ type: 'text', text: '真实请求' }], source: { kind: 'user' } } },
+      { type: 'user/message', data: { content: [{ type: 'text', text: '系统注入的系统提示很长' }], source: { kind: 'plugin' } } },
+      { type: 'user/message', data: { content: [{ type: 'text', text: '真实请求：请分析这个架构设计' }], source: { kind: 'user' } } },
     ]
-    expect(latestUserRequestFromEvents(events)).toBe('真实请求')
+    expect(latestUserRequestFromEvents(events)).toBe('真实请求：请分析这个架构设计')
   })
 
   it('returns undefined when there is no explicit user request', () => {
     expect(latestUserRequestFromEvents([])).toBeUndefined()
     expect(latestUserRequestFromEvents([{ type: 'tool/call', data: {} }])).toBeUndefined()
+  })
+
+  it('returns undefined when the session has only terse acks', () => {
+    const events = [
+      { type: 'user/message', data: { content: [{ type: 'text', text: '可以' }], source: { kind: 'user' } } },
+      { type: 'user/message', data: { content: [{ type: 'text', text: '好' }], source: { kind: 'user' } } },
+    ]
+    expect(latestUserRequestFromEvents(events)).toBeUndefined()
   })
 })
 
@@ -64,14 +90,14 @@ describe('backfillCaptureContext', () => {
       cap('c2', { sourceSessionId: 's2' }),
     ])
     const sq = sessionQuery({
-      s1: [userMsg('s1 的请求')],
-      s2: [userMsg('s2 的请求')],
+      s1: [userMsg('第一个 session 的完整需求：调研跨会话记忆方案')],
+      s2: [userMsg('第二个 session 的完整需求：实现任务分组')],
     })
     const result = await backfillCaptureContext(store, sq)
     expect(result.scanned).toBe(2)
     expect(result.filled).toBe(2)
-    expect(store.upserted[0]!.context).toBe('s1 的请求')
-    expect(store.upserted[1]!.context).toBe('s2 的请求')
+    expect(store.upserted[0]!.context).toBe('第一个 session 的完整需求：调研跨会话记忆方案')
+    expect(store.upserted[1]!.context).toBe('第二个 session 的完整需求：实现任务分组')
   })
 
   it('skips captures that already have context (idempotent)', async () => {
@@ -80,7 +106,7 @@ describe('backfillCaptureContext', () => {
       cap('c2', { sourceSessionId: 's2' }),
     ])
     const sq = sessionQuery({
-      s2: [userMsg('s2 的请求')],
+      s2: [userMsg('第二个 session 的完整需求：实现任务分组')],
     })
     const result = await backfillCaptureContext(store, sq)
     expect(result.scanned).toBe(1) // c1 有 context，不算
