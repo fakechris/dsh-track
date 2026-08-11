@@ -361,8 +361,7 @@ export function apply(ctx: Context, config?: Config) {
       if (req.method === 'POST') {
         const body = await readBody(req)
         const content = typeof body.content === 'string' ? body.content : ''
-        if (!content) { json(res, { error: 'content required' }, 400); return }
-        const tags = Array.isArray(body.tags) ? body.tags.filter((t): t is string => typeof t === 'string') : []
+        if (!content) { json(res, { error: 'content required' }, 400); return }        const tags = Array.isArray(body.tags) ? body.tags.filter((t): t is string => typeof t === 'string') : []
         const capture: Capture = {
           id: makeId('capture'),
           content,
