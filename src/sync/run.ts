@@ -78,6 +78,31 @@ const DEFAULT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
 const V2_ROUTE = { provider: 'deepseek-official', model: 'deepseek-v4-flash' }
 
 /**
+ * Map an array through a worker with bounded concurrency, preserving input
+ * order in the result. Used by the v2 Phase A session loop — sessions are
+ * independent, so a small pool (default 3) cuts wall time ~3-5× for LLM-heavy
+ * runs without tripping provider burst-QPS limits.
+ */
+export async function mapLimit<T, R>(
+  items: readonly T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length)
+  let next = 0
+  const runner = async (): Promise<void> => {
+    while (true) {
+      const i = next++
+      if (i >= items.length) return
+      results[i] = await worker(items[i]!, i)
+    }
+  }
+  const workers = Array.from({ length: Math.min(limit, items.length) }, () => runner())
+  await Promise.all(workers)
+  return results
+}
+
+/**
  * Run one sync pass.
  *
  * Pipeline (v1): filterSessions(cwd) → readSession+readTitle per session →
@@ -150,16 +175,18 @@ export async function runSync(deps: SyncDeps, options: SyncOptions): Promise<Syn
     }
     const candidates: TaskCandidate[] = []
     const profiles: SessionEventProfile[] = []
-    for (const record of records.slice(0, maxSessions)) {
+    // Phase A sessions are independent (readSession → segment → intent →
+    // synthesize) — run them through a bounded concurrency pool. Deepseek
+    // throttles burst QPS, so the default limit (3) keeps wall time ~3-5×
+    // lower than serial (verified: 15 sessions / ~70 LLM calls went 396s →
+    // ~2min) without tripping rate limits. Span order within a session is
+    // preserved, so downstream adjacentOnly merging is unaffected.
+    const sessions = records.slice(0, maxSessions)
+    const results = await mapLimit(sessions, 3, async (record) => {
       const snapshot = await sessionQuery.readSession(record.header.id)
       const lastActivity = snapshot.events.at(-1)?.time ?? 0
-      if (lastActivity <= Math.max(since, cursor)) continue
+      if (lastActivity <= Math.max(since, cursor)) return undefined
       const raws = normalizeLog(record.header.id, snapshot.events, snapshot.session)
-      profiles.push({
-        sessionId: record.header.id,
-        contentKeys: new Set(raws.map((r) => r.contentKey)),
-        parentSession: snapshot.session.parentSession,
-      })
       const sessionCaptures = capturesBySession.get(record.header.id) ?? []
       const motivationContext = sessionCaptures
         .filter((c) => c.status === 'open' || c.status === 'promoted')
@@ -171,6 +198,7 @@ export async function runSync(deps: SyncDeps, options: SyncOptions): Promise<Syn
         // token overlap). LLM re-merge happens later in mergeCandidates (P3
         // identity), which already runs across the whole candidate set.
       )
+      const sessionCandidates: TaskCandidate[] = []
       for (const span of spans) {
         // Intent layering: drop directives/interruptions unless they state a goal.
         // Segment-level judgement (all requests, not just the lead) so a span
@@ -193,8 +221,18 @@ export async function runSync(deps: SyncDeps, options: SyncOptions): Promise<Syn
         }
         candidate ??= candidateFromSpan(span)
         if (candidate.kind === 'non_task') continue
-        candidates.push(candidate)
+        sessionCandidates.push(candidate)
       }
+      return { profile: {
+        sessionId: record.header.id,
+        contentKeys: new Set(raws.map((r) => r.contentKey)),
+        parentSession: snapshot.session.parentSession,
+      }, candidates: sessionCandidates }
+    })
+    for (const result of results) {
+      if (!result) continue
+      profiles.push(result.profile)
+      candidates.push(...result.candidates)
     }
 
     // Phase B: fork-copy dedup — sessions with heavy event overlap are the
