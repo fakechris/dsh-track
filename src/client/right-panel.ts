@@ -186,6 +186,11 @@ const PANEL_CSS = `
 #${PANEL_ID} .inv-page-info { font-size: 11px; opacity: .7; }
 #${PANEL_ID} .inv-meta { font-size: 11px; opacity: .6; margin-top: 3px; }
 #${PANEL_ID} .inv-issue-count { font-weight: 400; }
+#${PANEL_ID} .inv-state-group {
+  font-size: 11px; font-weight: 600; opacity: .55; text-transform: uppercase;
+  margin: 8px 0 2px; letter-spacing: .03em;
+}
+#${PANEL_ID} .inv-state-group:first-child { margin-top: 0; }
 #${PANEL_ID} .inv-issue-card { padding: 0; overflow: hidden; }
 #${PANEL_ID} .inv-issue-header {
   display: flex; align-items: center; gap: 6px; padding: 7px 9px;
@@ -298,12 +303,30 @@ function render(snapshot: Snapshot): void {
   const issCount = q('.inv-issue-count')
   if (issEl !== null) {
     if (issCount !== null) issCount.textContent = snapshot.issues.length > 0 ? `(${snapshot.issues.length})` : ''
-    const totalPages = Math.max(1, Math.ceil(snapshot.issues.length / ISSUES_PER_PAGE))
+    // Organize: in_progress first, then todo/done/canceled; newest updatedAt
+    // within each group (user feedback 2026-08-11: reverse-chronological).
+    const ordered = [...snapshot.issues].sort((a, b) => {
+      const ga = STATE_ORDER[a.state] ?? 9
+      const gb = STATE_ORDER[b.state] ?? 9
+      if (ga !== gb) return ga - gb
+      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+    })
+    const totalPages = Math.max(1, Math.ceil(ordered.length / ISSUES_PER_PAGE))
     if (issuePage >= totalPages) issuePage = totalPages - 1
-    const pageIssues = snapshot.issues.slice(issuePage * ISSUES_PER_PAGE, (issuePage + 1) * ISSUES_PER_PAGE)
+    const pageIssues = ordered.slice(issuePage * ISSUES_PER_PAGE, (issuePage + 1) * ISSUES_PER_PAGE)
+    // Group header appears above the first visible card of each state.
+    const cards: string[] = []
+    let prevState: string | null = null
+    for (const issue of pageIssues) {
+      if (issue.state !== prevState) {
+        cards.push(`<div class="inv-state-group">${STATE_LABEL[issue.state] ?? issue.state} (${snapshot.issues.filter((x) => x.state === issue.state).length})</div>`)
+        prevState = issue.state
+      }
+      cards.push(renderIssueCard(issue))
+    }
     issEl.innerHTML = pageIssues.length === 0
       ? '<div class="inv-empty">暂无任务</div>'
-      : pageIssues.map((i) => renderIssueCard(i)).join('')
+      : cards.join('')
     const pager = q('.inv-issue-pager')
     if (pager !== null) {
       pager.innerHTML = totalPages > 1
@@ -384,6 +407,10 @@ function renderIssueDetail(i: Issue): string {
 const CAPTURES_PER_PAGE = 8
 const ISSUES_PER_PAGE = 8
 const PRIORITY_LABEL: Record<number, string> = { 0: 'urgent', 1: 'high', 2: 'medium', 3: 'low', 4: 'none' }
+/** Issue group order: active work first, then backlog, then finished. */
+const STATE_ORDER: Record<string, number> = { in_progress: 0, todo: 1, done: 2, canceled: 3 }
+/** Issue group display labels (zh, matching the panel language). */
+const STATE_LABEL: Record<string, string> = { in_progress: '进行中', todo: '待办', done: '已完成', canceled: '已取消' }
 let capturePage = 0
 let issuePage = 0
 let expandedIssueId: string | null = null
