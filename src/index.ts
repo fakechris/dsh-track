@@ -22,6 +22,7 @@ import { TrackStore, makeId } from './store.ts'
 import type { Capture, Decision, Issue } from './types.ts'
 import { runSync } from './sync/run.ts'
 import { createAutoSync } from './sync/auto.ts'
+import { createAutoCapture } from './capture/observe.ts'
 import type { SyncOptions, SyncReport, SyncDeps as SyncReportDeps } from './sync/run.ts'
 
 export const name = '@deepseek-ai/dsh-track'
@@ -358,6 +359,16 @@ export function apply(ctx: Context, config?: Config) {
         ),
     })
     return () => disposeAutoSync()
+  })
+
+  // ---- rule-based auto-capture: todo_write + git branch signals ----
+  // Zero-cost determinism (no LLM): the capture_thought tool almost never
+  // fires on its own (~1/148 measured), so the store also listens to the
+  // structured tool stream and captures planning (todo_write) and execution
+  // (git branch creation) signals as captures (2026-08-11).
+  ctx.effect(() => {
+    const disposeAutoCapture = createAutoCapture(ctx, { store })
+    return () => disposeAutoCapture()
   })
 
   // ---- HTTP API for the Web client panel (optional: needs httpServer) ----
