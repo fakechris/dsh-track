@@ -5,13 +5,13 @@
  * @module @deepseek-ai/dsh-track/sync/align
  */
 
-import type { Issue, IssueState } from '../types.ts'
+import type { Capture, Issue, IssueState } from '../types.ts'
 import type { EpicCandidate, IssueCandidate } from './cluster.ts'
 import { normalizeTitle } from './cluster.ts'
 
 /** What to do with one candidate. */
 export type IssueAction =
-  | { kind: 'create'; candidate: IssueCandidate }
+  | { kind: 'create'; candidate: IssueCandidate; promoteCaptureId?: string }
   | { kind: 'update'; candidate: IssueCandidate; existing: Issue; changes: string[] }
   | { kind: 'skip'; candidate: IssueCandidate; existing: Issue; reason: string }
 
@@ -31,6 +31,10 @@ export interface AlignResult {
  * Match rules (v1):
  * - `linkedSessionIds` contains the candidate's session → update (session already tracked).
  * - Otherwise, normalized-title equality → update (same work, new session folded in).
+ * - Otherwise, capture-content overlap → the candidate is the concrete form of a
+ *   previously captured thought: if the capture was already promoted to an
+ *   issue, update that issue (dedup); if it is still open, create the issue and
+ *   promote the capture to it (mapping).
  * - Otherwise → create.
  *
  * State evolution: a candidate never downgrades an existing issue's state, and
@@ -41,12 +45,23 @@ export function alignCandidates(
   existingIssues: Issue[],
   epicCandidates: EpicCandidate[] = [],
   existingEpicKeys: readonly string[] = [],
+  captures: Capture[] = [],
 ): AlignResult {
   const bySession = new Map<string, Issue>()
   const byTitle = new Map<string, Issue>()
+  const byId = new Map<string, Issue>()
   for (const issue of existingIssues) {
     for (const sid of issue.linkedSessionIds ?? []) bySession.set(sid, issue)
     byTitle.set(normalizeTitle(issue.title), issue)
+    byId.set(issue.id, issue)
+  }
+  // Promoted captures: capture → the issue it was promoted to (dedup path).
+  // Open captures: capture → candidate mapping candidate (create+promote path).
+  const promotedCaptureIssue = new Map<string, string>() // captureId → issueId
+  const openCaptures: Capture[] = []
+  for (const capture of captures) {
+    if (capture.promotedToIssueId) promotedCaptureIssue.set(capture.id, capture.promotedToIssueId)
+    else if (capture.status === 'open') openCaptures.push(capture)
   }
 
   const existingEpicKeySet = new Set(existingEpicKeys)
@@ -71,6 +86,28 @@ export function alignCandidates(
         existing: titleMatch,
         changes: changes.length ? changes : ['no field changes'],
       }
+    }
+    // Capture-based identity: the candidate is the concrete form of a thought.
+    // 1. A promoted capture → update the issue it already became (dedup, so a
+    //    later session about the same thought never spawns a duplicate issue).
+    const promotedMatch = captures.find((c) => {
+      const issueId = promotedCaptureIssue.get(c.id)
+      return issueId !== undefined && byId.has(issueId) && captureOverlaps(c, candidate)
+    })
+    if (promotedMatch) {
+      const existing = byId.get(promotedCaptureIssue.get(promotedMatch.id)!)!
+      const changes = diffChanges(existing, candidate)
+      return {
+        kind: 'update',
+        candidate,
+        existing,
+        changes: changes.length ? changes : ['no field changes'],
+      }
+    }
+    // 2. An open capture → create the issue and promote the capture to it.
+    const openMatch = openCaptures.find((c) => captureOverlaps(c, candidate))
+    if (openMatch) {
+      return { kind: 'create', candidate, promoteCaptureId: openMatch.id }
     }
     return { kind: 'create', candidate }
   })
@@ -118,4 +155,41 @@ function promoteState(existing: IssueState, suggested: IssueState): IssueState {
   if (existing === suggested) return existing
   const rank: Record<IssueState, number> = { todo: 0, in_progress: 1, done: 2, canceled: 3 }
   return rank[suggested] > rank[existing] && suggested !== 'done' ? suggested : existing
+}
+
+/**
+ * Does a capture's content overlap a candidate's work line?
+ *
+ * Conservative token-overlap test (rule layer — the "rules hold invariants"
+ * discipline): normalize both sides, then require a minimum number of shared
+ * tokens AND a minimum containment ratio. CJK is tokenized as character
+ * bigrams so multi-character shared substrings count; Latin tokens are words.
+ * Low bar on purpose (open captures are sparse) but never matches on empty
+ * content or single shared tokens.
+ */
+export function captureOverlaps(capture: Capture, candidate: IssueCandidate): boolean {
+  const captureTokens = contentTokens(capture.content)
+  const candidateTokens = contentTokens(`${candidate.title} ${candidate.description}`)
+  if (captureTokens.size === 0 || candidateTokens.size === 0) return false
+  let shared = 0
+  for (const token of candidateTokens) {
+    if (captureTokens.has(token)) shared += 1
+  }
+  if (shared < 2) return false
+  const containment = shared / Math.min(captureTokens.size, candidateTokens.size)
+  return containment >= 0.5
+}
+
+/** Normalize content into comparable tokens: CJK bigrams + latin words. */
+function contentTokens(text: string): Set<string> {
+  const tokens = new Set<string>()
+  const lower = text.toLowerCase()
+  for (const word of lower.match(/[a-z][a-z0-9-]*/g) ?? []) {
+    if (word.length >= 2) tokens.add(word)
+  }
+  // CJK has no word boundaries — character bigrams from each contiguous run.
+  for (const run of lower.match(/[\u4e00-\u9fff]+/g) ?? []) {
+    for (let i = 0; i < run.length - 1; i++) tokens.add(run.slice(i, i + 2))
+  }
+  return tokens
 }

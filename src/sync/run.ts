@@ -13,7 +13,7 @@
 import type { SessionQueryService } from '@deepseek-ai/dsh-session-query'
 import type { Context } from 'cordis'
 import type { TrackStore } from '../store.ts'
-import type { Issue } from '../types.ts'
+import type { Capture, Issue } from '../types.ts'
 import { alignCandidates, mergeIntoIssue, type IssueAction } from './align.ts'
 import { clusterWorklogs, normalizeTitle, type EpicCandidate, type IssueCandidate } from './cluster.ts'
 import { extractWorklog } from './extract.ts'
@@ -59,6 +59,8 @@ export interface SyncReport {
   created: number
   updated: number
   skipped: number
+  /** Captures promoted to issues by this pass (open capture → create+promote). */
+  promotedCaptures: number
 }
 
 /** Minimal service surface runSync needs — easy to stub in tests. */
@@ -212,11 +214,16 @@ export async function runSync(deps: SyncDeps, options: SyncOptions): Promise<Syn
   // ---- 4. align against existing store ----
   const existingIssues = await store.listIssues()
   const existingEpics = await store.listEpics()
+  // Captures feed capture→issue identity: a candidate that is the concrete
+  // form of a captured thought updates that issue (promoted) or creates +
+  // promotes it (open) — never a silent duplicate.
+  const captures: Capture[] = await store.listCaptures()
   const aligned = alignCandidates(
     issues,
     existingIssues,
     epics,
     existingEpics.map((e) => normalizeTitle(e.name)),
+    captures,
   )
 
   const report: SyncReport = {
@@ -229,6 +236,7 @@ export async function runSync(deps: SyncDeps, options: SyncOptions): Promise<Syn
     created: aligned.actions.filter((a) => a.kind === 'create').length,
     updated: aligned.actions.filter((a) => a.kind === 'update').length,
     skipped: aligned.actions.filter((a) => a.kind === 'skip').length,
+    promotedCaptures: aligned.actions.filter((a) => a.kind === 'create' && a.promoteCaptureId).length,
   }
 
   if (dryRun) return report
@@ -236,6 +244,7 @@ export async function runSync(deps: SyncDeps, options: SyncOptions): Promise<Syn
   // ---- 5. write-back ----
   let created = 0
   let updated = 0
+  let promotedCaptures = 0
   for (const action of aligned.actions) {
     if (action.kind === 'create') {
       const issue: Issue = {
@@ -256,6 +265,14 @@ export async function runSync(deps: SyncDeps, options: SyncOptions): Promise<Syn
       }
       await store.upsertIssue(issue)
       created += 1
+      // Promote the matched open capture: it became this issue.
+      if (action.promoteCaptureId) {
+        const capture = captures.find((c) => c.id === action.promoteCaptureId)
+        if (capture) {
+          await store.upsertCapture({ ...capture, status: 'promoted', promotedToIssueId: issue.id })
+          promotedCaptures += 1
+        }
+      }
     } else if (action.kind === 'update') {
       const merged = mergeIntoIssue(action.existing, action.candidate)
       await store.upsertIssue(merged)
@@ -293,5 +310,6 @@ export async function runSync(deps: SyncDeps, options: SyncOptions): Promise<Syn
   report.created = created
   report.updated = updated
   report.skipped = aligned.actions.filter((a) => a.kind === 'skip').length
+  report.promotedCaptures = promotedCaptures
   return report
 }
