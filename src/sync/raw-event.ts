@@ -61,8 +61,14 @@ export interface RawEvent {
   todoCount?: number
   cwd?: string
   branch?: string
-  /** Hash of the canonical JSON payload — content-addressing for dedup. */
+/** Hash of the canonical JSON payload — content-addressing for dedup. */
   payloadHash: string
+  /**
+   * Session-independent content key: seq + payload hash (no session id), used
+   * by cross-session identity resolution to detect fork copies whose events
+   * are byte-identical but live under different session ids.
+   */
+  contentKey: string
 }
 
 /** Stable hash of a JSON value (FNV-1a over canonical JSON). */
@@ -211,6 +217,7 @@ export function normalizeEvent(sessionId: string, event: SessionEvent, header?: 
     cwd: header?.cwd,
     branch: undefined,
     payloadHash,
+    contentKey: `${event.seq}:${payloadHash}`,
   }
 }
 

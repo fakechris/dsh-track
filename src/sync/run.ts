@@ -21,6 +21,7 @@ import { normalizeLog } from './raw-event.ts'
 import { segmentByRules, type EvidenceSpan } from './segment.ts'
 import { resolveSpanIntent } from './intent.ts'
 import { candidateFromSpan, synthesizeCandidate, projectToIssueCandidate, type TaskCandidate } from './candidate.ts'
+import { detectForkCopies, forkGroups, mergeCandidates, type SessionEventProfile } from './identity.ts'
 
 /** Sync scope and write-back control. */
 export interface SyncOptions {
@@ -130,13 +131,20 @@ export async function runSync(deps: SyncDeps, options: SyncOptions): Promise<Syn
   let issues: IssueCandidate[] = []
 
   if (engine === 'v2') {
-    // v2: normalize → segment → intent → synthesize → project
-    const projected: IssueCandidate[] = []
+    // v2: normalize → segment → intent → synthesize → identity → project
+    // Phase A: collect candidates + session event profiles across all sessions.
+    const candidates: TaskCandidate[] = []
+    const profiles: SessionEventProfile[] = []
     for (const record of records.slice(0, maxSessions)) {
       const snapshot = await sessionQuery.readSession(record.header.id)
       const lastActivity = snapshot.events.at(-1)?.time ?? 0
       if (lastActivity <= Math.max(since, cursor)) continue
       const raws = normalizeLog(record.header.id, snapshot.events, snapshot.session)
+      profiles.push({
+        sessionId: record.header.id,
+        contentKeys: new Set(raws.map((r) => r.contentKey)),
+        parentSession: snapshot.session.parentSession,
+      })
       const spans = segmentByRules(record.header.id, raws)
       for (const span of spans) {
         // Intent layering: drop directives/interruptions unless they state a goal.
@@ -156,10 +164,33 @@ export async function runSync(deps: SyncDeps, options: SyncOptions): Promise<Syn
         }
         candidate ??= candidateFromSpan(span)
         if (candidate.kind === 'non_task') continue
-        projected.push(projectToIssueCandidate(candidate))
+        candidates.push(candidate)
       }
     }
-    issues = projected
+
+    // Phase B: fork-copy dedup — sessions with heavy event overlap are the
+    // same logical session; keep only the FIRST fork's candidates. Dedupe key
+    // must be span-unique (sessionId + seqStart) so multiple spans of the SAME
+    // session are never mistaken for fork copies of each other.
+    const forks = detectForkCopies(profiles)
+    const forkSessionIds = new Set(forkGroups(forks).flat())
+    const deduped: TaskCandidate[] = []
+    const seenRepresentatives = new Set<string>()
+    for (const c of candidates) {
+      const group = forkGroups(forks).find((g) => g.includes(c.sessionId))
+      const representative = group?.[0] ?? c.sessionId
+      const dedupeKey = `${representative}:${c.span.seqStart}`
+      if (seenRepresentatives.has(dedupeKey)) continue
+      seenRepresentatives.add(dedupeKey)
+      deduped.push(c)
+    }
+    void forkSessionIds
+
+    // Phase C: merge candidates that are the same work line.
+    const { groups, standalone } = await mergeCandidates(ctx, deduped, { ...V2_ROUTE })
+    const merged: TaskCandidate[] = groups.map((g) => g.canonical).concat(standalone)
+    void forkSessionIds
+    issues = merged.map((c) => projectToIssueCandidate(c))
   } else {
     // v1: one issue per session, clustered by title.
     const clustered = clusterWorklogs(worklogs, metas)

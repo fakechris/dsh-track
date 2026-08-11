@@ -89,8 +89,10 @@ describe('extractWorklog', () => {
 })
 
 describe('normalizeTitle', () => {
-  it('normalizes case, punctuation, and whitespace', () => {
-    expect(normalizeTitle('  Build  The Tracker!! ')).toBe('build the tracker')
+  it('normalizes case, punctuation, and whitespace (all non-alphanumerics stripped)', () => {
+    expect(normalizeTitle('  Build  The Tracker!! ')).toBe('buildthetracker')
+    // Space variants are identical for clustering ("OAuth 回调" == "OAuth回调").
+    expect(normalizeTitle('修复 OAuth 回调')).toBe(normalizeTitle('修复OAuth回调'))
   })
 })
 

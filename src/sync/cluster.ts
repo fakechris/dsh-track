@@ -61,13 +61,15 @@ export interface ClusterResult {
 
 const MAX_TITLE = 80
 
-/** Normalize a title for clustering: lowercase, strip punctuation, collapse whitespace. */
+/**
+ * Normalize a title for clustering: lowercase, strip ALL non-alphanumeric
+ * characters (so "OAuth 回调" and "OAuth回调" are identical), collapse space.
+ */
 export function normalizeTitle(title: string): string {
   return title
     .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .replace(/[^\p{L}\p{N}]+/gu, '')
     .trim()
-    .replace(/\s+/g, ' ')
 }
 
 /** Fallback title from the first user request. */
