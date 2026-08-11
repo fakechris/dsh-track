@@ -20,6 +20,7 @@ import {
   type TrackGlobal,
   type Issue,
   type Link,
+  type LlmUsageRecord,
 } from './types.ts'
 
 /** Branded identifier prefixes keep record ids recognizable and collision-free. */
@@ -30,6 +31,7 @@ export const ID_PREFIX = {
   link: 'track_link_',
   decision: 'track_decision_',
   audit: 'track_audit_',
+  usage: 'track_usage_',
 } as const
 
 /** Random id with the given brand prefix. */
@@ -248,6 +250,20 @@ export class TrackStore {
   await this.ready()
     const { tables } = await this.unit.loadAll()
     return Object.values(tables.audit ?? {}) as AuditEntry[]
+  }
+
+  // ---- llm usage ledger (observability / cost accounting) ----
+
+  /** Append one LLM usage record (append-only ledger, one per real request). */
+  async appendUsage(record: LlmUsageRecord): Promise<void> {
+  await this.ready()
+    await this.chain('usage', () => this.unit.putRecord('usage', record.id, record))
+  }
+
+  async listUsage(): Promise<LlmUsageRecord[]> {
+  await this.ready()
+    const { tables } = await this.unit.loadAll()
+    return Object.values(tables.usage ?? {}) as LlmUsageRecord[]
   }
 
   /**

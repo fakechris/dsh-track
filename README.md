@@ -34,6 +34,27 @@ dsh web
 | `report_decision_point(question, options, my_preference, rationale, impact, need)` | AI 遇到不可逆/风险/范围/验收决策时上报，用户轻决策回答 |
 | `track_create_issue(title, description?, priority?, acceptance?, parent_id?)` | 创建 Linear 兼容 issue |
 | `track_list_issues(team_id?, state?)` | 列出 issue |
+| `track_sync_history(workspace?, since?, dry_run?, max_sessions?, engine?)` | 把工作区 session 历史折叠成 epic/issue 候选（默认 dry-run） |
+| `track_usage(since?)` | 报告 track 引擎发起的 LLM 调用开销：请求数、input/output/cache/reasoning token、耗时、估算成本（按模型分路由） |
+
+## LLM 用量账本（usage ledger）
+
+track 的 v2 同步引擎（`engine: 'v2'`）会直接调用 harness 的 `ctx.llm` 做语义判断
+（意图分层 / 候选合成 / 关系分类）。这类插件直连调用不产生 session 事件，harness 全局
+token-meter 看不到，因此 **track 在 `src/sync/llm.ts` 的唯一汇聚点自行计量**：
+
+- 每次流式调用记录一条 `LlmUsageRecord`（`usage` KV 表）：时间、调用点 label、
+  provider/model、`inputTokens` / `outputTokens` / `cacheReadTokens` / `cacheWriteTokens` /
+  `reasoningTokens`、结束原因（stop/max-tokens/error/aborted）、耗时；`llmJson` 的每次
+  重试 attempt 各记一条（一次重试 = 一次真实请求）。
+- 查询入口：`track_usage` 工具（模型可直接问"track 花了多少 token/钱"）与
+  `GET /api/track/usage?since=<epoch-ms>&limit=<n>`（汇总 + 最近明细）。
+- 成本估算按 `src/usage.ts` 的 `PRICING` 表（每百万 token 美元）：内置
+  `deepseek-official` 官方价（2026-08-01 验证：`deepseek-v4-flash` 输入 $0.14/1M、
+  cache hit $0.0028/1M、输出 $0.28/1M；`deepseek-v4-pro` 输入 $0.435/1M、cache hit
+  $0.003625/1M、输出 $0.87/1M）。不在表内的路由仍计数 token，成本标记为 unpriced。
+- 计量是 fire-and-forget 观测面：写入失败只记日志，绝不影响 sync 主流程；无 llm
+  service / 无 recorder 时零成本降级。
 
 ## 开发
 
@@ -49,6 +70,8 @@ pnpm test           # vitest
 src/index.ts        host 插件：工具注册 + 事件订阅 + store 接线
 src/store.ts        TrackStore：KV 单元封装（串行写链）
 src/types.ts        Linear 兼容数据形状
+src/usage.ts        LLM 用量账本：recorder 工厂 + 汇总 + 成本估算 + 渲染
+src/sync/llm.ts     LLM 门面：统一流式 JSON 调用 + 用量计量埋点
 skills/dsh-track fat skill：决策点判据/格式/纪律
 cordis.patch.yml    bundle patch（dsh plugin add 自动应用）
 ```

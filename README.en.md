@@ -37,6 +37,33 @@ dsh web
 | `report_decision_point(question, options, my_preference, rationale, impact, need)` | raise a decision point when the AI hits irreversible/risky/scope/acceptance decisions; the user answers with a lightweight choice |
 | `track_create_issue(title, description?, priority?, acceptance?, parent_id?)` | create a Linear-compatible issue |
 | `track_list_issues(team_id?, state?)` | list issues |
+| `track_sync_history(workspace?, since?, dry_run?, max_sessions?, engine?)` | fold workspace session history into epic/issue candidates (dry-run by default) |
+| `track_usage(since?)` | report LLM cost incurred by the track engine: request counts, input/output/cache/reasoning tokens, wall time, estimated cost per provider/model route |
+
+## LLM usage ledger
+
+The v2 sync engine (`engine: 'v2'`) calls the harness `ctx.llm` directly for
+semantic judgement (intent layering / candidate synthesis / relation
+classification). These plugin-direct calls never surface as session events, so
+the harness-wide token-meter cannot see them — **track meters them itself at
+the single funnel in `src/sync/llm.ts`**:
+
+- Every streamed call appends one `LlmUsageRecord` to the `usage` KV table:
+  timestamp, call-site label, provider/model, `inputTokens` / `outputTokens` /
+  `cacheReadTokens` / `cacheWriteTokens` / `reasoningTokens`, finish reason
+  (stop/max-tokens/error/aborted), and wall time; each `llmJson` retry attempt
+  is one record (one retry = one real request).
+- Query surfaces: the `track_usage` tool (the model can just ask "how many
+  tokens/dollars did track spend") and `GET /api/track/usage?since=<epoch-ms>&limit=<n>`
+  (summary + recent records).
+- Cost estimation uses the `PRICING` table in `src/usage.ts` (USD per 1M
+  tokens): built-in `deepseek-official` rates (verified 2026-08-01:
+  `deepseek-v4-flash` input $0.14/1M, cache hit $0.0028/1M, output $0.28/1M;
+  `deepseek-v4-pro` input $0.435/1M, cache hit $0.003625/1M, output $0.87/1M).
+  Routes outside the table still count tokens but report cost as unpriced.
+- Metering is a fire-and-forget observability surface: a failed write only
+  logs; it never affects the sync pipeline. With no llm service / no recorder
+  it degrades to zero cost.
 
 ## Development
 
@@ -52,6 +79,8 @@ pnpm test           # vitest
 src/index.ts        host plugin: tool registration + event subscription + store wiring
 src/store.ts        TrackStore: KV cell wrapper (serial write chain)
 src/types.ts        Linear-compatible data shapes
+src/usage.ts        LLM usage ledger: recorder factory + aggregation + cost estimation + rendering
+src/sync/llm.ts     LLM facade: unified streaming JSON calls + usage metering hook
 skills/dsh-track    fat skill: decision-point criteria/format/discipline
 cordis.patch.yml    bundle patch (auto-applied by dsh plugin add)
 ```

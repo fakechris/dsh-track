@@ -154,4 +154,54 @@ describe('track integration with real storage', () => {
     expect(typeof funnel.captures.open).toBe('number')
     expect(typeof funnel.issues.total).toBe('number')
   })
+
+  it('round-trips LLM usage records through the real unit', async () => {
+    await trackStore.appendUsage({
+      id: 'track_usage_e2e_1',
+      at: Date.now(),
+      label: 'intent',
+      provider: 'deepseek-official',
+      model: 'deepseek-v4-flash',
+      ok: true,
+      finishKind: 'stop',
+      durationMs: 42,
+      attempt: 1,
+      inputTokens: 100,
+      outputTokens: 20,
+      cacheReadTokens: 10,
+    })
+    const usage = await trackStore.listUsage()
+    const found = usage.find((u) => u.id === 'track_usage_e2e_1')
+    expect(found?.inputTokens).toBe(100)
+    expect(found?.label).toBe('intent')
+  })
+
+  it('metered llm calls flow into the store through the injected recorder', async () => {
+    // The plugin wires setUsageRecorder(createUsageRecorder(store)) on store
+    // open, so a streamed call through the llm facade lands in the ledger.
+    const { assembleText } = await import('../src/sync/llm.ts')
+    const before = (await trackStore.listUsage()).length
+    await assembleText(
+      {
+        stream: async function* () {
+          yield { type: 'block-start', index: 0, blockType: 'text' }
+          yield { type: 'text-delta', index: 0, text: '{"ok":true}' }
+          yield { type: 'block-end', index: 0, block: { type: 'text', text: '{"ok":true}' } }
+          yield { type: 'usage', usage: { inputTokens: 7, outputTokens: 3 } }
+          yield { type: 'finish', reason: { kind: 'stop' } }
+        },
+      } as never,
+      { provider: 'deepseek-official', model: 'deepseek-v4-flash' } as never,
+      { label: 'synthesize', attempt: 1 },
+    )
+    const after = await trackStore.listUsage()
+    expect(after.length).toBe(before + 1)
+    const last = after[after.length - 1]!
+    expect(last.label).toBe('synthesize')
+    expect(last.inputTokens).toBe(7)
+    expect(last.outputTokens).toBe(3)
+    // The recorder write is fire-and-forget; give the atomic write a moment
+    // to land so afterAll's temp-dir cleanup never races a pending rename.
+    await new Promise((r) => setTimeout(r, 100))
+  })
 })

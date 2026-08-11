@@ -139,6 +139,7 @@ export async function classifyRelation(
     maxTokens: 2000,
     temperature: 0,
     purpose: 'session-title',
+    label: 'relation',
   })
   if (!json) return undefined
   const relation = json.relation
