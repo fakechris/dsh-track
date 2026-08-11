@@ -1,7 +1,9 @@
 /**
- * Rule-based auto-capture tests — todo_write and git-branch signals produce
- * captures from the structured tool stream, dedupe, skip housekeeping, and
- * dispose cleanly. Pure rules: no timers, no LLM.
+ * Rule-based auto-capture tests — the todo_write signal produces captures
+ * from the structured tool stream, dedupe, carry motivation context (live
+ * cache + persisted-log seed), and dispose cleanly. Git branch creation is
+ * NOT a signal (removed 2026-08-11 — execution carrier, not a requirement).
+ * Pure rules: no timers, no LLM.
  * @module tests/auto-capture.spec
  */
 
@@ -71,48 +73,18 @@ describe('createAutoCapture', () => {
     dispose()
   })
 
-  it('captures git branch creation from bash commands (execution signal)', () => {
+  it('does NOT capture git branch creation (signal removed — execution carrier, not a requirement)', () => {
     const ctx = new Context()
     const store = makeStore()
     const dispose = createAutoCapture(ctx, { store })
 
+    // Branch creation used to capture "新建分支 feat/…" but dominated the wall
+    // with noise (9/17 in practice); todo_write covers the same work lines
+    // with the requirement's own wording.
     emitTool(ctx, 'session-a', 'bash', { command: 'cd /repo && git worktree add -b feat/track-observability ../dsh-track-obs' })
-    expect(store.upsertCapture).toHaveBeenCalledTimes(1)
-    expect(store.captures[0]!.content).toBe('新建分支 feat/track-observability')
-    expect(store.captures[0]!.tags).toContain('git-branch')
-    dispose()
-  })
-
-  it('matches git checkout -b and git switch -c variants', () => {
-    const ctx = new Context()
-    const store = makeStore()
-    const dispose = createAutoCapture(ctx, { store })
-
     emitTool(ctx, 's1', 'bash', { command: 'git checkout -b feat/a' })
     emitTool(ctx, 's2', 'bash', { command: 'git switch -c fix/b' })
-    expect(store.upsertCapture).toHaveBeenCalledTimes(2)
-    expect(store.captures.map((c) => c.content)).toEqual(['新建分支 feat/a', '新建分支 fix/b'])
-    dispose()
-  })
-
-  it('dedupes the same branch name across sessions', () => {
-    const ctx = new Context()
-    const store = makeStore()
-    const dispose = createAutoCapture(ctx, { store })
-
-    emitTool(ctx, 's1', 'bash', { command: 'git checkout -b feat/dup' })
-    emitTool(ctx, 's2', 'bash', { command: 'git worktree add -b feat/dup ../x' })
-    expect(store.upsertCapture).toHaveBeenCalledTimes(1)
-    dispose()
-  })
-
-  it('skips housekeeping branches (main/master)', () => {
-    const ctx = new Context()
-    const store = makeStore()
-    const dispose = createAutoCapture(ctx, { store })
-
     emitTool(ctx, 's1', 'bash', { command: 'git checkout -b main' })
-    emitTool(ctx, 's2', 'bash', { command: 'git checkout -b master' })
     expect(store.upsertCapture).not.toHaveBeenCalled()
     dispose()
   })
@@ -172,7 +144,7 @@ describe('createAutoCapture', () => {
     dispose()
   })
 
-  it('context is the LATEST user request, not the first (A)', () => {
+  it('context is the LATEST full instruction, not the first (A)', () => {
     const ctx = new Context()
     const store = makeStore()
     const dispose = createAutoCapture(ctx, { store })
@@ -181,11 +153,12 @@ describe('createAutoCapture', () => {
       type: 'user/message',
       data: { content: [{ type: 'text', text }], source: { kind: 'user' } },
     })
-    userMsg('第一件事：整理文档')
-    userMsg('第二件事：做一个 llm 用量计量模块')
-    emitTool(ctx, 's1', 'bash', { command: 'git checkout -b feat/track-llm-usage' })
+    userMsg('第一件事：请整理 dsh-harness-ops 的文档目录结构')
+    userMsg('第二件事：做一个 llm 用量计量模块，记录所有 track 发起的调用')
+    emitTool(ctx, 's1', 'todo_write', { todos: [{ content: '调研 StreamChunk usage/token 字段' }] })
 
     const cap = store.captures[0]!
+    expect(cap.content).toBe('调研 StreamChunk usage/token 字段')
     expect(cap.context).toContain('llm 用量计量模块')
     expect(cap.context).not.toContain('整理文档')
     dispose()
@@ -249,8 +222,8 @@ describe('createAutoCapture', () => {
 
     ctx.emit('session/event', { id: 's1' }, { type: 'turn/start' })
     await new Promise((r) => setTimeout(r, 10))
-    emitTool(ctx, 's1', 'bash', { command: 'git checkout -b feat/x' })
-    emitTool(ctx, 's1', 'bash', { command: 'git checkout -b feat/y' })
+    emitTool(ctx, 's1', 'todo_write', { todos: [{ content: '需求 A 的完整描述' }] })
+    emitTool(ctx, 's1', 'todo_write', { todos: [{ content: '需求 B 的完整描述' }] })
     await new Promise((r) => setTimeout(r, 10))
     expect(seedContext).toHaveBeenCalledTimes(1)
     dispose()
@@ -265,13 +238,13 @@ describe('createAutoCapture', () => {
     // A real user request arrives AFTER the observer starts → cache is warm.
     ctx.emit('session/event', { id: 's1' }, {
       type: 'user/message',
-      data: { content: [{ type: 'text', text: '新意图：修侧边栏' }], source: { kind: 'user' } },
+      data: { content: [{ type: 'text', text: '新意图：请修复侧边栏不可见的问题并补测试' }], source: { kind: 'user' } },
     })
     emitTool(ctx, 's1', 'todo_write', { todos: [{ content: '排查 side panel' }] })
     await new Promise((r) => setTimeout(r, 10))
     expect(seedContext).not.toHaveBeenCalled() // cache already warm
     const cap = store.captures[0]!
-    expect(cap.context).toContain('修侧边栏')
+    expect(cap.context).toContain('修复侧边栏')
     dispose()
   })
 })
