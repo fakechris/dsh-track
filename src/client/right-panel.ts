@@ -696,8 +696,18 @@ export function mountRightPanel(): () => void {
   tryMount()
   refresh()
 
+  // ---- light auto-refresh: silently re-poll captures/tasks so new items
+  // appear without manual ⟳. Two small GETs every 20s; skipped while the
+  // panel is closed. (2026-08-11: user observed the wall never updating.)
+  const autoRefresh = window.setInterval(() => {
+    if (panelOpen && !document.hidden) refresh()
+  }, 20000)
+  window.addEventListener('focus', refresh)
+
   return () => {
     observer.disconnect()
+    window.clearInterval(autoRefresh)
+    window.removeEventListener('focus', refresh)
     restoreLayout()
     panel?.remove()
     fab?.remove()
