@@ -84,6 +84,22 @@ export function apply(ctx: Context, config?: Config) {
     return openPromise
   }
 
+  // Observability: one audit row per model-facing tool call so funnel
+  // questions are answered by the store, not by session-log archaeology.
+  // Fire-and-forget: audit must never break the tool's real work.
+  const audit = (tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history', exec: { agent?: { id?: string } }, ok: boolean, detail?: string): void => {
+    void ensureStoreOpen()
+      .then(() => store.appendAudit({
+        id: makeId('audit'),
+        tool,
+        ts: Date.now(),
+        sessionId: exec.agent?.id,
+        ok,
+        detail,
+      }))
+      .catch(() => { /* observability is best-effort */ })
+  }
+
   // Open the KV unit once a kv-capable backend lands (see resolveKv).
   ctx.effect(async () => {
     try {
@@ -124,6 +140,7 @@ export function apply(ctx: Context, config?: Config) {
         createdAt: new Date().toISOString(),
       }
       await store.upsertCapture(capture)
+      audit('capture_thought', exec, true, capture.id)
       return `Captured: ${capture.id} (open)`
     },
     presentCall: (args) => ({ card: 'generic', title: 'Capture thought', kind: 'other', rawInput: args.content }),
@@ -172,6 +189,7 @@ export function apply(ctx: Context, config?: Config) {
       // decision list adds no management value and would only re-surface
       // already-answered items (decision-point removal, 2026-08-11).
       exec.agent.session.append('track/decision', decision)
+      audit('report_decision_point', exec, true, decision.id)
       return (
         `Decision point raised: ${decision.id}\n`
         + `Question: ${decision.question}\n`
@@ -209,7 +227,7 @@ export function apply(ctx: Context, config?: Config) {
       },
       render: (_args, value) => [{ type: 'text', text: `Created ${value.identifier} (${value.id})` }],
     },
-    async execute(args) {
+    async execute(args, exec) {
       const issue: Issue = {
         id: makeId('issue'),
         identifier: await store.nextIdentifier(teamKey),
@@ -227,6 +245,7 @@ export function apply(ctx: Context, config?: Config) {
         updatedAt: new Date().toISOString(),
       }
       await store.upsertIssue(issue)
+      audit('track_create_issue', exec, true, issue.identifier)
       return { id: issue.id, identifier: issue.identifier }
     },
     presentCall: (args) => ({ card: 'generic', title: 'Create issue', kind: 'other', rawInput: args.title }),
@@ -314,7 +333,9 @@ export function apply(ctx: Context, config?: Config) {
         { sessionQuery: sessionQuery as SyncReportDeps['sessionQuery'], store, ctx },
         options,
       )
-      return formatSyncReport(report, options.dryRun ?? true)
+      const text = formatSyncReport(report, options.dryRun ?? true)
+      audit('track_sync_history', exec, true, `${report.scannedSessions} sessions, ${report.created} create / ${report.updated} update (${options.dryRun ? 'dry' : 'written'})`)
+      return text
     },
     presentCall: (args) => ({ card: 'generic', title: 'Sync session history', kind: 'other', rawInput: args.workspace ?? 'current workspace' }),
   }))
@@ -393,6 +414,10 @@ export function apply(ctx: Context, config?: Config) {
     registerRoute('/issues', async (_req, res) => {
       await ensureStoreOpen()
       json(res, { issues: await store.listIssues() })
+    })
+    registerRoute('/funnel', async (_req, res) => {
+      await ensureStoreOpen()
+      json(res, { funnel: await store.funnel() })
     })
 
     // ---- action routes (prefix kind: exact wins for the base path, so
