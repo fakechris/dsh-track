@@ -124,11 +124,32 @@ export interface TrackGlobal {
   lastSync?: Record<string, number>
 }
 
+/**
+ * One tool-invocation audit record — the observability face. Written on every
+ * model-facing tool call so funnel questions ("how many captures vs how many
+ * candidates?") are answered by the store, not by archaeology over session
+ * logs (2026-08-11: capture conversion was ~1/148 and only recoverable by
+ * decompressing 62 session logs by hand).
+ */
+export interface AuditEntry {
+  id: string
+  /** The tool that ran: capture_thought | report_decision_point | track_create_issue | track_sync_history. */
+  tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history'
+  /** Epoch ms of the invocation. */
+  ts: number
+  /** Owning agent session id when available. */
+  sessionId?: string
+  /** Whether execution succeeded. */
+  ok: boolean
+  /** Short result annotation (e.g. created identifier, capture id, sync counts). */
+  detail?: string
+}
+
 /** KV unit descriptor for the track unit. */
 export const TRACK_UNIT = {
   name: 'track',
   version: 1,
-  tables: ['captures', 'issues', 'epics', 'links', 'decisions'],
+  tables: ['captures', 'issues', 'epics', 'links', 'decisions', 'audit'],
   hasGlobal: true,
 } as const
 

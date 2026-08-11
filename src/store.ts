@@ -14,6 +14,7 @@
 import type { KvFacet, KvUnit, KvUnitDescriptor } from '@deepseek-ai/dsh-storage'
 import {
   TRACK_UNIT,
+  type AuditEntry,
   type Capture,
   type Epic,
   type TrackGlobal,
@@ -28,6 +29,7 @@ export const ID_PREFIX = {
   epic: 'track_epic_',
   link: 'track_link_',
   decision: 'track_decision_',
+  audit: 'track_audit_',
 } as const
 
 /** Random id with the given brand prefix. */
@@ -233,6 +235,53 @@ export class TrackStore {
   await this.ready()
     const links = await this.listLinks()
     return links.filter((l) => l.fromId === id || l.toId === id)
+  }
+
+  // ---- audit (observability) ----
+
+  async appendAudit(entry: AuditEntry): Promise<void> {
+  await this.ready()
+    await this.chain('audit', () => this.unit.putRecord('audit', entry.id, entry))
+  }
+
+  async listAudit(): Promise<AuditEntry[]> {
+  await this.ready()
+    const { tables } = await this.unit.loadAll()
+    return Object.values(tables.audit ?? {}) as AuditEntry[]
+  }
+
+  /**
+   * Funnel summary over the audit trail — the observability face for the
+   * capture/issue pipeline. Answers "how many times was each tool invoked,
+   * and what is the capture conversion" directly from the store, instead of
+   * archaeology over session logs.
+   */
+  async funnel(): Promise<{
+    tools: Record<string, { calls: number; ok: number; fail: number }>
+    captures: { open: number; promoted: number }
+    issues: { total: number }
+    captureConversion: number | null
+  }> {
+  await this.ready()
+    const audit = await this.listAudit()
+    const tools: Record<string, { calls: number; ok: number; fail: number }> = {}
+    for (const entry of audit) {
+      const acc = (tools[entry.tool] ??= { calls: 0, ok: 0, fail: 0 })
+      acc.calls += 1
+      if (entry.ok) acc.ok += 1
+      else acc.fail += 1
+    }
+    const captures = await this.listCaptures()
+    const open = captures.filter((c) => c.status === 'open').length
+    const promoted = captures.filter((c) => c.status === 'promoted').length
+    const issues = await this.listIssues()
+    const captureCalls = tools['capture_thought']?.calls ?? 0
+    return {
+      tools,
+      captures: { open, promoted },
+      issues: { total: issues.length },
+      captureConversion: captureCalls > 0 ? Number((promoted / captureCalls).toFixed(3)) : null,
+    }
   }
 }
 

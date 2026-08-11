@@ -128,4 +128,30 @@ describe('track integration with real storage', () => {
     const second = await trackStore.promoteCaptureToIssue(id, 'INV')
     expect(second.id).toBe(first.id)
   })
+
+  it('appends audit entries and summarizes a funnel from the real unit', async () => {
+    await trackStore.appendAudit({
+      id: 'track_audit_a1',
+      tool: 'capture_thought',
+      ts: Date.now(),
+      sessionId: 'session-x',
+      ok: true,
+      detail: 'track_capture_x',
+    })
+    await trackStore.appendAudit({
+      id: 'track_audit_a2',
+      tool: 'track_create_issue',
+      ts: Date.now(),
+      ok: false,
+      detail: 'boom',
+    })
+    const audit = await trackStore.listAudit()
+    expect(audit.some((a) => a.id === 'track_audit_a1' && a.ok)).toBe(true)
+
+    const funnel = await trackStore.funnel()
+    expect(funnel.tools['capture_thought']?.calls).toBe(1)
+    expect(funnel.tools['track_create_issue']?.fail).toBe(1)
+    expect(typeof funnel.captures.open).toBe('number')
+    expect(typeof funnel.issues.total).toBe('number')
+  })
 })
