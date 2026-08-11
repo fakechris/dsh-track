@@ -166,10 +166,12 @@ export function apply(ctx: Context, config?: Config) {
         status: 'pending',
         createdAt: new Date().toISOString(),
       }
-      // Durable in-session trace: the decision is a session event.
+      // Durable in-session trace: the decision is a session event. Deliberately
+      // NOT persisted to the track store — the decision's value is the
+      // conversation itself (the user answers inline); a cross-session
+      // decision list adds no management value and would only re-surface
+      // already-answered items (decision-point removal, 2026-08-11).
       exec.agent.session.append('track/decision', decision)
-      // Durable in-store record: the decision is a management object.
-      await store.upsertDecision(decision)
       return (
         `Decision point raised: ${decision.id}\n`
         + `Question: ${decision.question}\n`
@@ -387,10 +389,6 @@ export function apply(ctx: Context, config?: Config) {
       }
       if (req.method === 'GET') { json(res, { captures: await store.listCaptures() }); return }
       json(res, { error: 'method not allowed' }, 405)
-    })
-    registerRoute('/decisions', async (_req, res) => {
-      await ensureStoreOpen()
-      json(res, { decisions: await store.listDecisions() })
     })
     registerRoute('/issues', async (_req, res) => {
       await ensureStoreOpen()

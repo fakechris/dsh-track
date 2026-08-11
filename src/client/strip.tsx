@@ -1,7 +1,6 @@
 /**
- * TrackStrip: the composer-dock strip surfacing decision-point and
- * capture-wall state. Styles are inline (no CSS modules) so the client
- * bundle needs no CSS pipeline.
+ * TrackStrip: the composer-dock strip surfacing capture-wall state. Styles
+ * are inline (no CSS modules) so the client bundle needs no CSS pipeline.
  * @module @deepseek-ai/dsh-track/client/strip
  */
 
@@ -35,24 +34,13 @@ const style = {
   empty: { opacity: 0.55, fontStyle: 'italic' } as const,
 }
 
-/** Track strip component: label + pending decision / capture counts. */
-export function TrackStrip({ decisions, captures, t }: TrackStripProps & PropsLocale<'track'>) {
-  const hasWork = decisions > 0 || captures > 0
-  const plural = (n: number) => (n === 1 ? '' : 's')
+/** Track strip component: label + open capture count. */
+export function TrackStrip({ captures, t }: TrackStripProps & PropsLocale<'track'>) {
   return (
     <button type="button" style={style.strip} data-testid="track-strip">
       <span style={style.label}>{t('strip.label')}</span>
-      {hasWork ? (
-        <span>
-          {decisions > 0 && (
-            <span style={style.badge} title={t('strip.decisions', { n: decisions, plural: plural(decisions) })}>
-              {t('strip.decisions', { n: decisions, plural: plural(decisions) })}
-            </span>
-          )}
-          {captures > 0 && (
-            <span style={style.muted}>{t('strip.captures', { n: captures, plural: plural(captures) })}</span>
-          )}
-        </span>
+      {captures > 0 ? (
+        <span style={style.badge}>{t('strip.captures', { n: captures }) }</span>
       ) : (
         <span style={style.empty}>{t('strip.empty')}</span>
       )}

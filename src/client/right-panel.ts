@@ -10,7 +10,7 @@
  * @module @deepseek-ai/dsh-track/client/right-panel
  */
 
-import type { Capture, Decision, Issue } from '../types.ts'
+import type { Capture, Issue } from '../types.ts'
 
 /** Stable ids for the injected panel and toggle. */
 export const PANEL_ID = 'dsh-track-panel'
@@ -23,21 +23,18 @@ const WIDTH_KEY = 'dsh.track.width'
 
 interface Snapshot {
   captures: Capture[]
-  decisions: Decision[]
   issues: Issue[]
 }
 
-const EMPTY: Snapshot = { captures: [], decisions: [], issues: [] }
+const EMPTY: Snapshot = { captures: [], issues: [] }
 
 async function fetchSnapshot(): Promise<Snapshot> {
-  const [c, d, i] = await Promise.all([
+  const [c, i] = await Promise.all([
     fetch('/api/track/captures').then((r) => r.json()).catch(() => ({ captures: [] })),
-    fetch('/api/track/decisions').then((r) => r.json()).catch(() => ({ decisions: [] })),
     fetch('/api/track/issues').then((r) => r.json()).catch(() => ({ issues: [] })),
   ])
   return {
     captures: c.captures ?? [],
-    decisions: d.decisions ?? [],
     issues: i.issues ?? [],
   }
 }
@@ -60,10 +57,6 @@ function buildPanelHtml(): string {
       </div>
       <div class="inv-captures"></div>
       <div class="inv-pager"></div>
-    </div>
-    <div class="inv-section">
-      <div class="inv-section-title">待确认决策点 <span class="inv-decision-count"></span></div>
-      <div class="inv-decisions"></div>
     </div>
     <div class="inv-section">
       <div class="inv-section-title">任务 <span class="inv-issue-count"></span></div>
@@ -283,7 +276,6 @@ function render(snapshot: Snapshot): void {
   if (panel === null) return
   const q = (sel: string): HTMLElement | null => panel!.querySelector(sel)
   const openCaptures = snapshot.captures.filter((c) => c.status === 'open')
-  const pendingDecisions = snapshot.decisions.filter((d) => d.status === 'pending')
 
   const capEl = q('.inv-captures')
   if (capEl !== null) {
@@ -302,15 +294,6 @@ function render(snapshot: Snapshot): void {
         : ''
     }
   }
-  const decEl = q('.inv-decisions')
-  const decCount = q('.inv-decision-count')
-  if (decEl !== null) {
-    decEl.innerHTML = pendingDecisions.length === 0
-      ? '<div class="inv-empty">暂无待确认决策</div>'
-      : pendingDecisions.slice(0, 5).map((d) =>
-        `<div class="inv-card">${escapeHtml(d.question)}<div class="inv-meta">我的倾向：${escapeHtml(d.aiPreference)}</div></div>`).join('')
-  }
-  if (decCount !== null) decCount.textContent = pendingDecisions.length > 0 ? `(${pendingDecisions.length})` : ''
   const issEl = q('.inv-issues')
   const issCount = q('.inv-issue-count')
   if (issEl !== null) {

@@ -39,21 +39,8 @@ export function apply(ctx: ClientContext): void {
   const panelDisposer = mountRightPanel()
   ctx.effect(() => panelDisposer, 'dsh-track: right panel')
 
-  // Pending decision count for the composer strip (live poll of the host API).
-  let pendingCount = 0
-  const pollPending = (): void => {
-    fetch('/api/track/decisions')
-      .then((r) => r.json())
-      .then((d) => { pendingCount = (d.decisions ?? []).filter((x: { status: string }) => x.status === 'pending').length })
-      .catch(() => undefined)
-  }
-  pollPending()
-  const pendingTimer = window.setInterval(pollPending, 5000)
-  ctx.effect(() => () => window.clearInterval(pendingTimer), 'dsh-track: pending poll')
-
-  // ---- composer-dock strip (counts) ----
+  // ---- composer-dock strip (open capture count) ----
   const injectActions = (): TrackStripProps => ({
-    decisions: pendingCount,
     captures: 0,
   })
   ctx.slots.inject('conversation.composer.dock', () =>
