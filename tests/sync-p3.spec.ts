@@ -131,6 +131,7 @@ describe('runSync v2 fork dedup', () => {
       store: {
         readGlobal: async () => null,
         listIssues: async () => [],
+      listCaptures: async () => [],
         listEpics: async () => [],
         nextIdentifier: async () => 'INV-1',
         upsertIssue: async () => {},

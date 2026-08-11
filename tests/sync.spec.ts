@@ -226,6 +226,7 @@ describe('runSync', () => {
     const store = {
       readGlobal: async () => null,
       listIssues: async () => [],
+      listCaptures: async () => [],
       listEpics: async () => [],
       nextIdentifier: async () => 'INV-1',
       upsertIssue: async () => { writes += 1 },
@@ -247,6 +248,7 @@ describe('runSync', () => {
     const store = {
       readGlobal: async () => globalRef.global ?? null,
       listIssues: async () => [],
+      listCaptures: async () => [],
       listEpics: async () => [],
       nextIdentifier: async () => 'INV-1',
       upsertIssue: async (issue: unknown) => { created.push(issue) },
@@ -264,6 +266,7 @@ describe('runSync', () => {
     const store = {
       readGlobal: async () => ({ version: 1 as const, teams: {}, identifierCounter: 0, lastSync: { '/ws': 9000 } }),
       listIssues: async () => [],
+      listCaptures: async () => [],
       listEpics: async () => [],
     }
     // Last activity 5000 < cursor 9000 → skipped.
@@ -279,6 +282,7 @@ describe('runSync', () => {
     const store = {
       readGlobal: async () => null,
       listIssues: async () => [],
+      listCaptures: async () => [],
       listEpics: async () => [],
     }
     const deps = makeDeps({}, store)

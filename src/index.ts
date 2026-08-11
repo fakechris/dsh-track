@@ -439,7 +439,7 @@ function formatSyncReport(report: SyncReport, dryRun: boolean): string {
   lines.push('Planned actions:')
   for (const action of report.actions) {
     if (action.kind === 'create') {
-      lines.push(`  + create ${action.candidate.title} (${action.candidate.suggestedState})`)
+      lines.push(`  + create ${action.candidate.title} (${action.candidate.suggestedState})${action.promoteCaptureId ? ' [promotes capture]' : ''}`)
     } else if (action.kind === 'update') {
       lines.push(`  ~ update ${action.existing.identifier} ${action.existing.title} — ${action.changes.join('; ')}`)
     } else {
@@ -447,7 +447,7 @@ function formatSyncReport(report: SyncReport, dryRun: boolean): string {
     }
   }
   lines.push('')
-  lines.push(`Summary: ${report.created} create / ${report.updated} update / ${report.skipped} skip.`)
+  lines.push(`Summary: ${report.created} create / ${report.updated} update / ${report.skipped} skip / ${report.promotedCaptures} capture(s) promoted.`)
   if (dryRun) {
     lines.push('Run again with dry_run=false to write these changes.')
   }
