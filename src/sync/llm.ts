@@ -93,31 +93,40 @@ export async function llmJson(
     purpose?: string
   },
 ): Promise<Record<string, unknown> | undefined> {
-  const text = await assembleText(llm, {
-    provider: opts.provider,
-    model: opts.model,
-    system: opts.system,
-    messages: [userMessage(opts.prompt)],
-    // deepseek-v4-flash is a reasoning model: reasoning tokens consume part of
-    // maxTokens, so give enough budget for reasoning + JSON output (verified:
-    // 500 is fully eaten by reasoning on longer Chinese inputs).
-    maxTokens: opts.maxTokens ?? 2000,
-    temperature: opts.temperature ?? 0.2,
-    signal: opts.signal,
-    purpose: opts.purpose as GenerateOptions['purpose'],
-  })
-  if (!text) return undefined
-  let body = text.trim()
-  const fence = body.match(/^```(?:json)?\s*([\s\S]*?)```$/i)
-  if (fence) body = fence[1]!.trim()
-  try {
-    const parsed = JSON.parse(body)
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined
-    for (const key of opts.requiredKeys) {
-      if (!(key in parsed)) return undefined
+  // Root-cause fix for truncated JSON (verified 2026-08-11): deepseek-v4-flash
+  // is a reasoning model — reasoning tokens share the maxTokens budget with the
+  // output, so a long JSON candidate gets cut by finish=length and fails parse.
+  // JSON extraction is a pure formatting task: disable reasoning and give the
+  // output 4000 tokens (7/8 valid vs 5/8 before). A bounded retry on top covers
+  // residual provider flakiness (empty/partial responses) — not truncation.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const text = await assembleText(llm, {
+      provider: opts.provider,
+      model: opts.model,
+      system: opts.system,
+      messages: [userMessage(opts.prompt)],
+      maxTokens: opts.maxTokens ?? 4000,
+      temperature: opts.temperature ?? 0.2,
+      reasoningEffort: 'off' as GenerateOptions['reasoningEffort'],
+      signal: opts.signal,
+      purpose: opts.purpose as GenerateOptions['purpose'],
+    })
+    if (text) {
+      let body = text.trim()
+      const fence = body.match(/^```(?:json)?\s*([\s\S]*?)```$/i)
+      if (fence) body = fence[1]!.trim()
+      try {
+        const parsed = JSON.parse(body)
+        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) continue
+        let allKeys = true
+        for (const key of opts.requiredKeys) {
+          if (!(key in parsed)) { allKeys = false; break }
+        }
+        if (allKeys) return parsed as Record<string, unknown>
+      } catch {
+        // fall through to retry
+      }
     }
-    return parsed as Record<string, unknown>
-  } catch {
-    return undefined
   }
+  return undefined
 }

@@ -72,6 +72,8 @@ function resolveKv(ctx: Context): Promise<KvFacet> {
 
 export function apply(ctx: Context, config?: Config) {
   const teamKey = config?.teamKey ?? DEFAULT_TEAM_KEY
+  // Resume auto-continue: after a restart, an interrupted agent turn continues
+  // automatically (host-side agent/created listener — no browser timing races).
   // HTTP handlers may fire before the store effect opens the unit; keep a
   // lazily-resolved open so the API works regardless of boot ordering.
   let openPromise: Promise<void> | null = null
@@ -285,6 +287,9 @@ export function apply(ctx: Context, config?: Config) {
       if (!sessionQuery) {
         throw new Error('track_sync_history requires the session-query service (mounted by the web profile)')
       }
+      // Probe: does the llm service resolve in the TOOL execution context?
+      const reflect = (ctx as unknown as { reflect?: { get: (n: string, s?: boolean) => unknown } }).reflect
+      console.error('[dsh-track-tool-probe]', JSON.stringify({ llm: reflect?.get('llm', false) ? 'present' : 'MISSING', sq: !!sessionQuery, cwd: exec.agent.session.header.cwd }))
       const workspace = args.workspace ?? exec.agent.session.header.cwd
       if (!workspace) {
         throw new Error('track_sync_history needs a workspace cwd: pass workspace= or run from a session with one')
@@ -356,8 +361,7 @@ export function apply(ctx: Context, config?: Config) {
       if (req.method === 'POST') {
         const body = await readBody(req)
         const content = typeof body.content === 'string' ? body.content : ''
-        if (!content) { json(res, { error: 'content required' }, 400); return }
-        const tags = Array.isArray(body.tags) ? body.tags.filter((t): t is string => typeof t === 'string') : []
+        if (!content) { json(res, { error: 'content required' }, 400); return }        const tags = Array.isArray(body.tags) ? body.tags.filter((t): t is string => typeof t === 'string') : []
         const capture: Capture = {
           id: makeId('capture'),
           content,
