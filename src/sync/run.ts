@@ -128,6 +128,10 @@ export async function runSync(deps: SyncDeps, options: SyncOptions): Promise<Syn
 
   // ---- 2. read logs + titles ----
   const worklogs = []
+  /** Records that actually entered worklogs (post cursor/skip, capped by
+   *  maxSessions) — v2's Phase A must iterate THESE, not the raw record list
+   *  (which includes cursor-skipped sessions and uncapped leftovers). */
+  const inScopeRecords = []
   const metas: Record<string, { id: string; title?: string; teamKey: string; createdAt: number }> = {}
   let skippedByCursor = 0
 
@@ -140,6 +144,7 @@ export async function runSync(deps: SyncDeps, options: SyncOptions): Promise<Syn
       skippedByCursor += 1
       continue
     }
+    inScopeRecords.push(record)
     const worklog = extractWorklog(record.header.id, snapshot.events)
     const title = await sessionQuery.readTitle(record.header.id)
     metas[record.header.id] = {
@@ -181,7 +186,7 @@ export async function runSync(deps: SyncDeps, options: SyncOptions): Promise<Syn
     // lower than serial (verified: 15 sessions / ~70 LLM calls went 396s →
     // ~2min) without tripping rate limits. Span order within a session is
     // preserved, so downstream adjacentOnly merging is unaffected.
-    const sessions = records.slice(0, maxSessions)
+    const sessions = inScopeRecords
     const results = await mapLimit(sessions, 3, async (record) => {
       const snapshot = await sessionQuery.readSession(record.header.id)
       const lastActivity = snapshot.events.at(-1)?.time ?? 0

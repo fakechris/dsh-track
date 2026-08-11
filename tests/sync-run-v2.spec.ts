@@ -133,3 +133,36 @@ describe('mapLimit (v2 Phase A concurrency pool)', () => {
     expect(await mapLimit([], 3, async () => 1)).toEqual([])
   })
 })
+
+describe('runSync v2 maxSessions cap', () => {
+  it('honors maxSessions in v2 (inScopeRecords, not the raw record list)', async () => {
+    // 3 sessions; maxSessions=1 must process exactly one.
+    const eventsOf = (text: string) => [userMsg(0, text, 1000)]
+    const d = deps({
+      s1: eventsOf('第一个 session 的任务'),
+      s2: eventsOf('第二个 session 的任务'),
+      s3: eventsOf('第三个 session 的任务'),
+    })
+    const report = await runSync(d as never, { cwd: '/ws', since: 0, dryRun: true, engine: 'v2', maxSessions: 1 })
+    expect(report.scannedSessions).toBe(1)
+    expect(report.issueCandidates.length).toBeGreaterThan(0)
+    // Every candidate must come from the first session.
+    for (const c of report.issueCandidates) {
+      expect(c.sessionId).toBe('s1')
+    }
+  })
+
+  it('cursor-skipped sessions do not consume the maxSessions budget', async () => {
+    const eventsOf = (text: string, time: number) => [userMsg(0, text, time)]
+    const d = deps({
+      s1: eventsOf('旧 session（被 cursor 跳过）', 500), // before scanFrom
+      s2: eventsOf('新 session', 5000),
+    })
+    const report = await runSync(d as never, { cwd: '/ws', since: 1000, dryRun: true, engine: 'v2', maxSessions: 1 })
+    // s1 skipped by cursor; budget must still allow s2.
+    expect(report.scannedSessions).toBe(1)
+    for (const c of report.issueCandidates) {
+      expect(c.sessionId).toBe('s2')
+    }
+  })
+})
