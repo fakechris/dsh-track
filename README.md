@@ -36,6 +36,23 @@ dsh web
 | `track_list_issues(team_id?, state?)` | 列出 issue |
 | `track_sync_history(workspace?, since?, dry_run?, max_sessions?, engine?)` | 把工作区 session 历史折叠成 epic/issue 候选（默认 dry-run） |
 | `track_usage(since?)` | 报告 track 引擎发起的 LLM 调用开销：请求数、input/output/cache/reasoning token、耗时、估算成本（按模型分路由） |
+| `track_backfill_captures()` | 存量捕获 context 回填：把动机链功能（PR #20）之前产生的无 context open capture，从源 session 日志补最近用户显式请求；幂等 |
+
+## 捕获动机链（capture motivation context）
+
+自动捕获（`capture/observe.ts`）从结构化工具流抓取执行信号（todo_write 首条、
+git 分支创建）。为避免捕获墙变成「无上下文的琐碎动作清单」（如「调研 StreamChunk
+usage/token 字段」而不知是「为了实现成本计量」），每条捕获携带 **context = 该会话
+最近一条用户显式请求**（`source.kind === 'user'`）：
+
+- 实时：observer 维护 per-session 缓存，捕获时写入（A）
+- 续接会话（重启后 splice）：`seedContext` 从持久化日志回填最近用户请求（#21）
+- 存量：`track_backfill_captures` 一次性回填 PR #20 之前的旧捕获（#22）
+
+context 在 v2 管线三处消费：synthesize 时喂给 LLM（标题从执行层升到需求层，
+如「调研 StreamChunk…为 LLM 用量记录模块做准备」）；align 时 `captureOverlaps`
+匹配 content OR context（执行层捕获映射到需求候选）；同 context 的多个捕获
+整组 promote（一个需求的碎片一次 fold，不留孤儿）。
 
 ## LLM 用量账本（usage ledger）
 
