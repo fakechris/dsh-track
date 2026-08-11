@@ -16,6 +16,7 @@
     "@deepseek-ai/dsh-session": "*",
     "@deepseek-ai/dsh-storage": "*",
     "@deepseek-ai/dsh-tools": "*",
+    "@deepseek-ai/dsh-llm": "*",
     "cordis": "*"
   },
   "dsh": {
