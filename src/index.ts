@@ -19,10 +19,12 @@ import type { KvFacet } from '@deepseek-ai/dsh-storage'
 // Type-only: pulls the ctx.httpServer Context merge from dsh-host-webserver.
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { TrackStore, makeId } from './store.ts'
-import type { Capture, Decision, Issue } from './types.ts'
+import type { Capture, Decision, Issue, LlmUsageRecord } from './types.ts'
 import { runSync } from './sync/run.ts'
 import { createAutoSync } from './sync/auto.ts'
 import { createAutoCapture } from './capture/observe.ts'
+import { setUsageRecorder } from './sync/llm.ts'
+import { createUsageRecorder, formatUsageReport, summarizeUsage } from './usage.ts'
 import type { SyncOptions, SyncReport, SyncDeps as SyncReportDeps } from './sync/run.ts'
 
 export const name = '@deepseek-ai/dsh-track'
@@ -88,7 +90,7 @@ export function apply(ctx: Context, config?: Config) {
   // Observability: one audit row per model-facing tool call so funnel
   // questions are answered by the store, not by session-log archaeology.
   // Fire-and-forget: audit must never break the tool's real work.
-  const audit = (tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history', exec: { agent?: { id?: string } }, ok: boolean, detail?: string): void => {
+  const audit = (tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history' | 'track_usage', exec: { agent?: { id?: string } }, ok: boolean, detail?: string): void => {
     void ensureStoreOpen()
       .then(() => store.appendAudit({
         id: makeId('audit'),
@@ -108,6 +110,9 @@ export function apply(ctx: Context, config?: Config) {
       console.log('[dsh-track] kv backend resolved, opening store')
       await store.open(kv)
       console.log('[dsh-track] store open:', store.isOpen)
+      // Wire the LLM usage ledger: every ctx.llm call the engine makes is
+      // appended to the store (fire-and-forget; see sync/llm.ts metering).
+      setUsageRecorder(createUsageRecorder(store))
     } catch (e) {
       console.error('[dsh-track] store open failed:', e)
       throw e
@@ -341,6 +346,43 @@ export function apply(ctx: Context, config?: Config) {
     presentCall: (args) => ({ card: 'generic', title: 'Sync session history', kind: 'other', rawInput: args.workspace ?? 'current workspace' }),
   }))
 
+  // ---- track_usage: LLM usage ledger + cost estimate ----
+  // Every ctx.llm call the track engine makes (v2 sync: intent layering,
+  // candidate synthesis, relation classification) is metered into the store
+  // by sync/llm.ts. This tool answers "how many requests / tokens / dollars
+  // did track spend" from the store — req counts, input/output/cache tokens,
+  // and an estimated cost against the PRICING table in src/usage.ts.
+  ctx.tools.register(defineTool({
+    name: 'track_usage',
+    description:
+      'Report LLM token usage and estimated cost accumulated by the track engine (v2 sync semantic '
+      + 'judgement: intent layering, candidate synthesis, relation classification). Returns request counts, '
+      + 'input/output/cache/reasoning tokens, wall time, and an estimated USD cost per provider/model route. '
+      + 'Use when the user asks how many LLM requests track made, how many tokens it consumed, or how much '
+      + 'it cost — e.g. "track 花了多少 token", "LLM 开销统计".',
+    parameters: {
+      since: { type: 'string', description: 'Only count calls after this ISO timestamp or epoch-ms number. Defaults to all recorded usage.' },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    async execute(args, exec) {
+      await ensureStoreOpen()
+      const since = args.since !== undefined
+        ? (/^\d+$/.test(String(args.since)) ? Number(args.since) : Date.parse(String(args.since)))
+        : undefined
+      if (since !== undefined && Number.isNaN(since)) {
+        throw new Error(`invalid since timestamp: ${String(args.since)}`)
+      }
+      const records = await store.listUsage()
+      const summary = summarizeUsage(records, since)
+      audit('track_usage', exec, true, `${summary.total.calls} calls, ${summary.total.billedTokens} tokens`)
+      return formatUsageReport(summary)
+    },
+    presentCall: (args) => ({ card: 'generic', title: 'Track LLM usage', kind: 'other', rawInput: args.since ?? 'all time' }),
+  }))
+
   // ---- session event subscription: capture derived requirements ----
   // The engine observes session events so derived work can be surfaced, but it
   // does NOT auto-create issues — triage stays human/agent confirmed. Phase 0b:
@@ -429,6 +471,22 @@ export function apply(ctx: Context, config?: Config) {
     registerRoute('/funnel', async (_req, res) => {
       await ensureStoreOpen()
       json(res, { funnel: await store.funnel() })
+    })
+    // GET /api/track/usage[?since=<epoch-ms>&limit=<n>] — LLM usage ledger:
+    // summary (req counts, tokens, est. cost) + the most recent records.
+    registerRoute('/usage', async (req, res) => {
+      await ensureStoreOpen()
+      const url = new URL(req.url ?? '/', 'http://x')
+      const since = url.searchParams.get('since')
+      const limitRaw = url.searchParams.get('limit')
+      const sinceMs = since !== null
+        ? (/^\d+$/.test(since) ? Number(since) : Date.parse(since))
+        : undefined
+      const limit = limitRaw !== null && /^\d+$/.test(limitRaw) ? Number(limitRaw) : 50
+      const records = await store.listUsage()
+      const summary = summarizeUsage(records, sinceMs)
+      const recent = [...records].sort((a, b) => b.at - a.at).slice(0, limit)
+      json(res, { usage: recent, summary })
     })
 
     // ---- action routes (prefix kind: exact wins for the base path, so

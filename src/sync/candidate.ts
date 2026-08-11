@@ -189,6 +189,7 @@ export async function synthesizeCandidate(
     maxTokens: 2000,
     temperature: 0.2,
     purpose: 'session-title',
+    label: 'synthesize',
   })
   if (!json) return undefined
 

@@ -90,6 +90,7 @@ export async function judgeIntent(
     maxTokens: 2000,
     temperature: 0,
     purpose: 'session-title', // closed enum; the value is metadata only
+    label: 'intent',
   })
   if (!json) return undefined
   const intent = json.intent
@@ -130,6 +131,7 @@ export async function judgeSpanIntent(
     maxTokens: 2000,
     temperature: 0,
     purpose: 'session-title',
+    label: 'span-intent',
   })
   if (!json) return undefined
   const intent = json.intent

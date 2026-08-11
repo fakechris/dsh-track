@@ -133,8 +133,8 @@ export interface TrackGlobal {
  */
 export interface AuditEntry {
   id: string
-  /** The tool that ran: capture_thought | report_decision_point | track_create_issue | track_sync_history. */
-  tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history'
+  /** The tool that ran: capture_thought | report_decision_point | track_create_issue | track_sync_history | track_usage. */
+  tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history' | 'track_usage'
   /** Epoch ms of the invocation. */
   ts: number
   /** Owning agent session id when available. */
@@ -145,11 +145,49 @@ export interface AuditEntry {
   detail?: string
 }
 
+/**
+ * One LLM call made by the track engine — the usage ledger (2026-08-11).
+ *
+ * The track engine's semantic judgement (intent layering, candidate
+ * synthesis, relation classification) streams through the plugin-direct
+ * `ctx.llm` facade in `sync/llm.ts`; those calls never surface as session
+ * events, so the global token-meter never prices them. Every streamed call
+ * is recorded here (one record per HTTP request, i.e. per retry attempt),
+ * so "how many requests / tokens / dollars did track cost" is answered by
+ * the store instead of session-log archaeology.
+ */
+export interface LlmUsageRecord {
+  /** Stable id: `track_usage_<uuid>`. */
+  id: string
+  /** Epoch ms of the call start. */
+  at: number
+  /** Call site label passed to llmJson: intent | span-intent | synthesize | relation. */
+  label: string
+  /** Provider route key (e.g. deepseek-official). */
+  provider: string
+  /** Model id (e.g. deepseek-v4-flash). */
+  model: string
+  /** Whether the call produced a usable text result. */
+  ok: boolean
+  /** Finish-reason kind from the stream: stop | max-tokens | aborted | error. */
+  finishKind: string
+  /** Wall time of the streamed call in ms. */
+  durationMs: number
+  /** 1-based retry attempt inside llmJson — each attempt is one real request. */
+  attempt: number
+  /** Uncached input tokens (provider-reported, disjoint buckets). */
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+  reasoningTokens?: number
+}
+
 /** KV unit descriptor for the track unit. */
 export const TRACK_UNIT = {
   name: 'track',
   version: 1,
-  tables: ['captures', 'issues', 'epics', 'links', 'decisions', 'audit'],
+  tables: ['captures', 'issues', 'epics', 'links', 'decisions', 'audit', 'usage'],
   hasGlobal: true,
 } as const
 
