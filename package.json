@@ -8,7 +8,7 @@
   "types": "lib/types/index.d.ts",
   "scripts": {
     "build": "node scripts/dsh-env.mjs tsc -p \"${DSH_TSCONFIG:-tsconfig.json}\" && node scripts/dsh-env.mjs tsdown -c tsdown.client.config.ts && node -e \"require('fs').renameSync('lib/client.cjs','lib/client.js')\"",
-    "prepack": "npm run build",
+    "prepack": "npm run build && node scripts/prepack-cordis-rewrite.mjs",
     "test": "node scripts/dsh-env.mjs vitest run tests",
     "typecheck": "node scripts/dsh-env.mjs tsc -p \"${DSH_TSCONFIG:-tsconfig.json}\" --noEmit"
   },
@@ -17,7 +17,7 @@
     "@deepseek-ai/dsh-storage": "*",
     "@deepseek-ai/dsh-tools": "*",
     "@deepseek-ai/dsh-llm": "*",
-    "cordis": "*"
+    "@deepseek-ai/cordis": "*"
   },
   "dsh": {
     "bundle": {
