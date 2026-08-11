@@ -29,7 +29,7 @@ const style = {
     background: '#4c8dff',
     color: '#fff',
     fontSize: 11,
-    lineHeight: 16,
+    lineHeight: '16px',
   } as const,
   muted: { opacity: 0.7 } as const,
   empty: { opacity: 0.55, fontStyle: 'italic' } as const,
