@@ -6,9 +6,9 @@
  * @module tests/sync-p2.spec
  */
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { normalizeLog } from '../src/sync/raw-event.ts'
-import { segmentByRules, isTodoReset, IDLE_BOUNDARY_MS } from '../src/sync/segment.ts'
+import { segmentByRules, aggregateSpans, spanOverlap, isTodoReset, IDLE_BOUNDARY_MS } from '../src/sync/segment.ts'
 import { ruleIntentPrefilter, resolveIntent } from '../src/sync/intent.ts'
 import { candidateFromSpan, refineCandidate, isGenericTitle, synthesizeCandidate } from '../src/sync/candidate.ts'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
@@ -200,5 +200,93 @@ describe('candidate fallback (no LLM)', () => {
     }
     const c = await synthesizeCandidate(newCtx(), { provider: 'x', model: 'y', span })
     expect(c).toBeUndefined()
+  })
+})
+
+describe('aggregateSpans (over-segmentation fix)', () => {
+  const mkSpan = (id: string, seqStart: number, lead: string, reqs: string[], seqEnd?: number): any => ({
+    id, sessionId: 's1', seqStart, seqEnd: seqEnd ?? seqStart, leadRequest: lead, requests: reqs,
+    openedBy: ['topic-marker'], interruptedCount: 0, todoResetCount: 0, idleBeforeMs: 0,
+  })
+
+  it('merges a continuation-step span into the previous work line', async () => {
+    const spans = [
+      mkSpan('a', 0, '接入 runSync', ['接入 runSync']),
+      mkSpan('b', 100, '继续查', ['继续查']),
+    ]
+    const agg = await aggregateSpans(spans)
+    expect(agg).toHaveLength(1)
+    expect(agg[0]!.requests).toEqual(['接入 runSync', '继续查'])
+  })
+
+  it('merges a short question/feedback span (step, not new task)', async () => {
+    const spans = [
+      mkSpan('a', 0, '调研任务状态机', ['调研任务状态机信号设计']),
+      mkSpan('b', 100, '结论怎么样了', ['结论怎么样了']),
+    ]
+    const agg = await aggregateSpans(spans)
+    expect(agg).toHaveLength(1)
+  })
+
+  it('keeps distinct-topic spans separate', async () => {
+    const spans = [
+      mkSpan('a', 0, '调研任务状态机', ['调研任务状态机信号设计 todo/in_progress']),
+      mkSpan('b', 100, '修复 OAuth 回调', ['修复 OAuth 回调并补测试']),
+    ]
+    const agg = await aggregateSpans(spans)
+    expect(agg).toHaveLength(2)
+  })
+
+  it('merges spans with high token overlap', async () => {
+    const spans = [
+      mkSpan('a', 0, '修复重启后无法自动拉回的问题', ['修复重启后无法自动拉回的问题']),
+      mkSpan('b', 100, '修复重启拉回问题', ['修复重启拉回问题']),
+    ]
+    expect(spanOverlap(spans[0]!, spans[1]!)).toBeGreaterThan(0.5)
+    const agg = await aggregateSpans(spans)
+    expect(agg).toHaveLength(1)
+  })
+
+  it('uses the LLM judge for ambiguous adjacent pairs when provided', async () => {
+    // Disjoint content (no overlap, not a continuation hint) → deterministic
+    // paths skip, judge is consulted.
+    const spans = [
+      mkSpan('a', 0, '部署 Kubernetes 集群', ['部署 Kubernetes 集群到生产环境']),
+      mkSpan('b', 100, '迁移数据库到 PostgreSQL', ['迁移数据库到 PostgreSQL']),
+    ]
+    const judge = vi.fn().mockResolvedValue(true) // LLM says SAME_TASK
+    const agg = await aggregateSpans(spans, { judge })
+    expect(judge).toHaveBeenCalled()
+    expect(agg).toHaveLength(1)
+  })
+
+  it('does NOT swallow an unrelated short span via whole-span char-set inflation', async () => {
+    // Regression (6c5c0b49): a 22-request research span swallowed
+    // "重启了，slot a，你看看" because its char set had grown to overlap ANY
+    // short follow-up. Overlap must be judged on LEAD requests + stop words.
+    const spans = [
+      mkSpan('a', 0, '看了一下，issue提取的质量不高', [
+        '看了一下，issue提取的质量不高',
+        '你交给research agent跑一轮',
+        '结论怎么样了',
+        '再看一个另外的research # 研究结论',
+        '再参考一瓶 # dsh-track v2 研究报告',
+        'p2',
+      ]),
+      mkSpan('b', 100, '重启了，slot a，你看看', ['重启了，slot a，你看看']),
+    ]
+    const agg = await aggregateSpans(spans)
+    expect(agg).toHaveLength(2)
+  })
+
+  it('hint must OPEN the request — mid-sentence "看看" is not a step', async () => {
+    // Regression: "重启了，slot a，你看看" contains 看看 mid-sentence; a bare
+    // `includes` match wrongly treated it as a continuation step of ANY line.
+    const spans = [
+      mkSpan('a', 0, '接入 runSync 并验证', ['接入 runSync 并验证']),
+      mkSpan('b', 100, '重启了，slot a，你看看', ['重启了，slot a，你看看']),
+    ]
+    const agg = await aggregateSpans(spans)
+    expect(agg).toHaveLength(2)
   })
 })

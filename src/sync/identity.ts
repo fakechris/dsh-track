@@ -176,28 +176,46 @@ export function ruleRelation(a: TaskCandidate, b: TaskCandidate): { relation: Wo
 export async function mergeCandidates(
   ctx: Context | undefined,
   candidates: TaskCandidate[],
-  opts: { provider: string; model: string; mergeThreshold?: number },
+  opts: { provider: string; model: string; mergeThreshold?: number; adjacentOnly?: boolean },
 ): Promise<{ groups: MergeGroup[]; standalone: TaskCandidate[] }> {
   const threshold = opts.mergeThreshold ?? 0.7
+  const adjacentOnly = opts.adjacentOnly ?? false
+  // Sort by span position so "adjacent" is meaningful (same session: seqStart;
+  // cross-session: stable by sessionId then seqStart).
+  const sorted = [...candidates].sort((a, b) =>
+    a.sessionId === b.sessionId ? a.span.seqStart - b.span.seqStart : a.sessionId.localeCompare(b.sessionId))
   const merged = new Set<number>()
   const groups: MergeGroup[] = []
   const relations: Array<{ from: string; to: string; kind: WorkRelation }> = []
 
-  for (let i = 0; i < candidates.length; i++) {
+  for (let i = 0; i < sorted.length; i++) {
     if (merged.has(i)) continue
-    const group: TaskCandidate[] = [candidates[i]!]
+    const group: TaskCandidate[] = [sorted[i]!]
     merged.add(i)
-    for (let j = i + 1; j < candidates.length; j++) {
-      if (merged.has(j)) continue
+    const candidatesToCheck: number[] = []
+    if (adjacentOnly) {
+      // Only the immediate next un-merged candidate (same session) — O(n) calls.
+      for (let j = i + 1; j < sorted.length; j++) {
+        if (merged.has(j)) continue
+        if (sorted[j]!.sessionId !== sorted[i]!.sessionId) break // cross-session boundary
+        candidatesToCheck.push(j)
+        break
+      }
+    } else {
+      for (let j = i + 1; j < sorted.length; j++) {
+        if (!merged.has(j)) candidatesToCheck.push(j)
+      }
+    }
+    for (const j of candidatesToCheck) {
       const verdict = ctx
-        ? await classifyRelation(ctx, { provider: opts.provider, model: opts.model, a: candidates[i]!, b: candidates[j]! })
+        ? await classifyRelation(ctx, { provider: opts.provider, model: opts.model, a: sorted[i]!, b: sorted[j]! })
         : undefined
-      const relation = verdict ?? ruleRelation(candidates[i]!, candidates[j]!)
+      const relation = verdict ?? ruleRelation(sorted[i]!, sorted[j]!)
       if (relation.confidence >= threshold && ['SAME_TASK', 'CONTINUATION_OF', 'DUPLICATES'].includes(relation.relation)) {
-        group.push(candidates[j]!)
+        group.push(sorted[j]!)
         merged.add(j)
       } else {
-        relations.push({ from: candidates[i]!.id, to: candidates[j]!.id, kind: relation.relation })
+        relations.push({ from: sorted[i]!.id, to: sorted[j]!.id, kind: relation.relation })
       }
     }
     const canonical = [...group].sort((a, b) => b.requests.length - a.requests.length)[0]!
