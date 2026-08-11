@@ -271,6 +271,7 @@ export function apply(ctx: Context, config?: Config) {
       since: { type: 'string', description: 'Only fold sessions active after this ISO timestamp or epoch-ms number. Defaults to 7 days ago.' },
       dry_run: { type: 'boolean', description: 'Preview only — list candidates and planned actions without writing. Default true.' },
       max_sessions: { type: 'integer', description: 'Safety cap on sessions scanned per run (default 200).' },
+      engine: { type: 'string', enum: ['v1', 'v2'], description: "Extraction engine: 'v1' (one issue per session, default) or 'v2' (segment + intent + synthesize + merge)." },
     },
     output: {
       schema: { type: 'string' },
@@ -299,9 +300,10 @@ export function apply(ctx: Context, config?: Config) {
         since,
         dryRun: args.dry_run ?? true,
         maxSessions: args.max_sessions,
+        engine: args.engine === 'v2' ? 'v2' : 'v1',
       }
       const report: SyncReport = await runSync(
-        { sessionQuery: sessionQuery as SyncReportDeps['sessionQuery'], store },
+        { sessionQuery: sessionQuery as SyncReportDeps['sessionQuery'], store, ctx },
         options,
       )
       return formatSyncReport(report, options.dryRun ?? true)
@@ -393,8 +395,8 @@ export function apply(ctx: Context, config?: Config) {
       const maxSessions = typeof body.max_sessions === 'number' ? body.max_sessions : undefined
       try {
         const report = await runSync(
-          { sessionQuery: sessionQuery as SyncReportDeps['sessionQuery'], store },
-          { cwd: workspace ?? (ctx as unknown as { workspace?: { cwd?: string } }).workspace?.cwd ?? '', since, dryRun, maxSessions },
+          { sessionQuery: sessionQuery as SyncReportDeps['sessionQuery'], store, ctx },
+          { cwd: workspace ?? (ctx as unknown as { workspace?: { cwd?: string } }).workspace?.cwd ?? '', since, dryRun, maxSessions, engine: body.engine === 'v2' ? 'v2' : 'v1' },
         )
         json(res, { ok: true, dryRun, report })
       } catch (e) {
