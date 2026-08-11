@@ -50,6 +50,7 @@ const CANDIDATE_SYSTEM = `You turn a slice of an AI coding session into ONE task
 
 Rules:
 - Title: short, scan-friendly, states the task directly. Never "Hello"/greeting-only. 动词开头, ≤ 80 chars.
+- Title MUST be self-sufficient: carry the work's object — the repo, component, file, package, or issue/PR number the task acts on. "更新 issue 514" alone is NOT self-sufficient (which issue? which repo?); prefer "更新 dsh-external/issues 的 issue 514 表述并补验证评论". If the object is missing, pull it from the evidence requests.
 - Description fields: goal (what must be achieved), deliverable (independently verifiable output), scope, non-goals, constraints.
 - Acceptance criteria: testable items. Mark source: explicit_user (user stated it), inferred (you derived it), test_derived (a test exists as verifier). Unconfirmed inferred AC are authority=proposed.
 - evidenceRefs: the user request lines you used (verbatim).
@@ -75,7 +76,66 @@ export function refineCandidate(candidate: TaskCandidate): TaskCandidate {
     // Title lint: greeting-only / no-object titles are non_task.
     ...(isGenericTitle(candidate.title) ? { kind: 'non_task' as const, confidence: Math.min(candidate.confidence, 0.2) } : {}),
   }
+  // Title self-sufficiency (P1): a title without a work object ("更新 issue 514",
+  // "分析一下", "调研") is not self-sufficient. When the candidate is
+  // rule-derived (no LLM), try to backfill the object from the evidence
+  // requests; if none is found, drop confidence so the title is de-ranked
+  // instead of surfacing as a confident task.
+  if (c.kind !== 'non_task' && !titleHasObject(c.title)) {
+    const backfilled = backfillObjectFromRequests(c.title, c.requests)
+    if (backfilled) {
+      c.title = backfilled.slice(0, 80)
+    } else {
+      c.confidence = Math.min(c.confidence, 0.25)
+    }
+  }
   return c
+}
+
+/**
+ * Does the title carry a work object — a repo/component/file/package name or
+ * an issue/PR number? Conservative: anything with an explicit object wins.
+ * Bare verb phrases ("调研一下", "更新 issue 514", "分析看看") fail, so the
+ * rule layer de-ranks them instead of surfacing as confident tasks.
+ */
+export function titleHasObject(title: string): boolean {
+  const t = title.trim()
+  if (!t) return false
+  // issue/PR number, kebab scope, dotted package, repo@ref
+  if (/[A-Za-z0-9]+-\d+/.test(t)) return true
+  if (/[a-z][a-z0-9]*[-/][a-z0-9-]+/.test(t)) return true
+  if (/[a-z][a-z0-9]*\.[a-z]{2,}/.test(t)) return true
+  // English tech/object tokens (≥3 letters) — "update OAuth callback"
+  if (/[a-z]{3,}/i.test(t)) return true
+  // CJK-only titles: strip a leading verb + filler; the remainder is the
+  // object phrase. "调研一下" → "" (fail); "调研任务管理产品" → "任务管理产品"
+  // (pass, ≥3 chars); "更新 issue 514" already passed via the number branch.
+  const stripped = t
+    .replace(/^(调研|研究|分析|实现|修复|安装|确认|调查|解释|验证|更新|解决|整理|同步|设计|完善|优化|支持|测试|排查|解析|恢复|提交|补充|梳理|归纳|提炼|构建|接入|迁移|发布|回顾|检查|审查|评估|对比|归总|跟进|记录|起草|协调|整合|清理|拆除|替换|简化|重构)/, '')
+    .replace(/^(一下|一遍|了|些|点|个|看看|下)/, '')
+  return stripped.length >= 3
+}
+
+/** Pull a work-object phrase from the evidence requests to backfill a title. */
+export function backfillObjectFromRequests(title: string, requests: string[]): string | null {
+  const full = requests.join('\n')
+  // Prefer explicit issue/PR numbers or repo scopes mentioned in evidence.
+  // Accepts "issue 514", "issues/514", "#514" separators.
+  const issue = full.match(/(?:issue|issues?|#)\s*[/#]?\s*([A-Za-z0-9]+-\d+|\d+)/i)
+  if (issue) {
+    const num = issue[1]!
+    return /[A-Za-z]/.test(num) ? `更新 ${num} 相关任务（${title}）` : `更新 issue ${num}（${title}）`
+  }
+  // Repo scopes: org/repo, but exclude URL host paths like github.com/...
+  const repo = full.match(/(?:github\.com\/|gitlab\.com\/)?([a-z0-9][-a-z0-9]*\/[a-z0-9][-a-z0-9]*)/i)
+  if (repo) {
+    const name = repo[1]!
+    // Skip when the "repo" is actually a URL host path (e.g. com/dsh-external).
+    if (name.split('/')[0]!.length >= 3 && !name.startsWith('www.')) {
+      return `${title}（对象：${name}）`
+    }
+  }
+  return null
 }
 
 /** Greeting / no-object / placeholder titles are not tasks (defect #1 fix). */

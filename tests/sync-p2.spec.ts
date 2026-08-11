@@ -10,7 +10,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { normalizeLog } from '../src/sync/raw-event.ts'
 import { segmentByRules, aggregateSpans, spanOverlap, isTodoReset, IDLE_BOUNDARY_MS } from '../src/sync/segment.ts'
 import { ruleIntentPrefilter, resolveIntent } from '../src/sync/intent.ts'
-import { candidateFromSpan, refineCandidate, isGenericTitle, synthesizeCandidate } from '../src/sync/candidate.ts'
+import { candidateFromSpan, refineCandidate, isGenericTitle, synthesizeCandidate, titleHasObject } from '../src/sync/candidate.ts'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 
 function ev<T extends SessionEvent['type']>(
@@ -175,6 +175,47 @@ describe('candidate refinement', () => {
       evidenceRefs: [], confidence: 0.5, decidedBy: 'rule', requests: [],
     })
     expect(c.acceptanceCriteria).toHaveLength(0)
+  })
+
+  describe('title self-sufficiency (P1)', () => {
+    it('titleHasObject accepts titles with an explicit object', () => {
+      expect(titleHasObject('更新 dsh-external/issues 的 issue 514 表述')).toBe(true)
+      expect(titleHasObject('修复 OAuth 回调')).toBe(true)
+      expect(titleHasObject('实现 involute 插件（方案C）')).toBe(true)
+      expect(titleHasObject('调研任务管理产品如何用 AI 生成任务')).toBe(true)
+      expect(titleHasObject('INV-58 实现侧边栏')).toBe(true)
+      expect(titleHasObject('Install turtle-ui plugin')).toBe(true)
+    })
+
+    it('titleHasObject rejects bare verb phrases without an object', () => {
+      expect(titleHasObject('调研一下')).toBe(false)
+      expect(titleHasObject('分析看看')).toBe(false)
+      expect(titleHasObject('更新')).toBe(false)
+      expect(titleHasObject('确认')).toBe(false)
+    })
+
+    it('backfills an issue number from evidence into a bare title', () => {
+      const c = refineCandidate({
+        id: 'c4', sessionId: 's1', span: { seqStart: 0, seqEnd: 1 },
+        kind: 'docs', authority: 'system_inferred',
+        title: '更新表述', scope: [], nonGoals: [], constraints: [],
+        acceptanceCriteria: [], evidenceRefs: [], confidence: 0.7,
+        decidedBy: 'rule', requests: ['更新 https://github.com/dsh-external/issues/issues/514 的 issue 表述'],
+      })
+      expect(c.title).toMatch(/514/)
+      expect(c.title).toContain('更新')
+    })
+
+    it('de-ranks confidence when no object can be backfilled', () => {
+      const c = refineCandidate({
+        id: 'c5', sessionId: 's1', span: { seqStart: 0, seqEnd: 1 },
+        kind: 'investigation', authority: 'system_inferred',
+        title: '调研一下', scope: [], nonGoals: [], constraints: [],
+        acceptanceCriteria: [], evidenceRefs: [], confidence: 0.9,
+        decidedBy: 'rule', requests: ['调研一下'],
+      })
+      expect(c.confidence).toBeLessThanOrEqual(0.25)
+    })
   })
 })
 
