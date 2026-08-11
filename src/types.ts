@@ -135,8 +135,12 @@ export const TRACK_UNIT = {
 // Session event declaration merge: `track/decision` is a durable,
 // whole-value session event carrying the complete decision snapshot, so
 // replay and resume recover it by last-write-wins (same rule as goal/change).
+// `track/sync-preview` is the automatic-aggregation preview (Phase 0b):
+// appended after a workspace goes idle, carrying a dry-run summary so the
+// agent can surface candidates to the user without auto-writing.
 declare module '@deepseek-ai/dsh-session' {
   interface SessionEventMap {
     'track/decision': Decision
+    'track/sync-preview': import('./sync/auto.ts').SyncPreview
   }
 }
