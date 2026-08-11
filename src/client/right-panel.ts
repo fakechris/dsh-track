@@ -59,6 +59,7 @@ function buildPanelHtml(): string {
         <button class="inv-capture" type="button">捕获</button>
       </div>
       <div class="inv-captures"></div>
+      <div class="inv-pager"></div>
     </div>
     <div class="inv-section">
       <div class="inv-section-title">待确认决策点 <span class="inv-decision-count"></span></div>
@@ -163,6 +164,32 @@ const PANEL_CSS = `
   padding: 7px 9px; border: 1px solid var(--dsw-alias-border-l1, rgba(0,0,0,.12));
   border-radius: 6px; font-size: 12.5px;
 }
+#${PANEL_ID} .inv-actions {
+  display: flex; align-items: center; gap: 6px; margin-top: 5px; flex-wrap: wrap;
+}
+#${PANEL_ID} .inv-act {
+  padding: 2px 8px; border: 1px solid var(--dsw-alias-border-l2, rgba(0,0,0,.15));
+  border-radius: 5px; background: transparent; color: var(--dsw-alias-label-secondary, #555);
+  font-size: 11.5px; cursor: pointer;
+}
+#${PANEL_ID} .inv-act:hover { background: var(--dsw-alias-bg-layer-1, rgba(0,0,0,.05)); }
+#${PANEL_ID} .inv-act.inv-danger {
+  border-color: #e5484d; background: #e5484d; color: #fff;
+}
+#${PANEL_ID} .inv-act.inv-danger-ghost { border-color: rgba(229,72,77,.45); color: #e5484d; }
+#${PANEL_ID} .inv-act.inv-danger-ghost:hover { background: rgba(229,72,77,.08); }
+#${PANEL_ID} .inv-confirm-hint { font-size: 11.5px; color: #e5484d; }
+#${PANEL_ID} .inv-pager {
+  display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+  margin-top: 6px; min-height: 18px;
+}
+#${PANEL_ID} .inv-page {
+  width: 22px; height: 22px; border: 1px solid var(--dsw-alias-border-l2, rgba(0,0,0,.15));
+  border-radius: 5px; background: transparent; color: var(--dsw-alias-label-secondary, #555);
+  font-size: 13px; line-height: 1; cursor: pointer;
+}
+#${PANEL_ID} .inv-page:disabled { opacity: .35; cursor: default; }
+#${PANEL_ID} .inv-page-info { font-size: 11px; opacity: .7; }
 #${PANEL_ID} .inv-meta { font-size: 11px; opacity: .6; margin-top: 3px; }
 #${PANEL_ID} .inv-empty { opacity: .5; font-size: 12px; font-style: italic; }
 #${PANEL_ID} .inv-width-resizer {
@@ -224,10 +251,20 @@ function render(snapshot: Snapshot): void {
 
   const capEl = q('.inv-captures')
   if (capEl !== null) {
-    capEl.innerHTML = openCaptures.length === 0
+    const totalPages = Math.max(1, Math.ceil(openCaptures.length / CAPTURES_PER_PAGE))
+    if (capturePage >= totalPages) capturePage = totalPages - 1
+    const pageCaps = openCaptures.slice(capturePage * CAPTURES_PER_PAGE, (capturePage + 1) * CAPTURES_PER_PAGE)
+    capEl.innerHTML = pageCaps.length === 0
       ? '<div class="inv-empty">暂无捕获</div>'
-      : openCaptures.slice(0, 8).map((c) =>
-        `<div class="inv-card">${escapeHtml(c.content)}<div class="inv-meta">${c.tags.map(escapeHtml).join(' · ') || ''}${c.tags.length ? ' · ' : ''}${new Date(c.createdAt).toLocaleString()}</div></div>`).join('')
+      : pageCaps.map((c) => renderCaptureCard(c)).join('')
+    const pager = q('.inv-pager')
+    if (pager !== null) {
+      pager.innerHTML = totalPages > 1
+        ? `<button class="inv-page" data-page="${capturePage - 1}" ${capturePage === 0 ? 'disabled' : ''}>‹</button>` +
+          `<span class="inv-page-info">${capturePage + 1}/${totalPages}</span>` +
+          `<button class="inv-page" data-page="${capturePage + 1}" ${capturePage >= totalPages - 1 ? 'disabled' : ''}>›</button>`
+        : ''
+    }
   }
   const decEl = q('.inv-decisions')
   const decCount = q('.inv-decision-count')
@@ -242,10 +279,38 @@ function render(snapshot: Snapshot): void {
   if (issEl !== null) {
     issEl.innerHTML = snapshot.issues.length === 0
       ? '<div class="inv-empty">暂无任务</div>'
-      : snapshot.issues.slice(0, 5).map((i) =>
-        `<div class="inv-card">${escapeHtml(i.identifier)} [${i.state}] ${escapeHtml(i.title)}</div>`).join('')
+      : snapshot.issues.slice(0, 5).map((i) => renderIssueCard(i)).join('')
   }
 }
+
+/** One capture card with delete (two-step confirm) + promote actions. */
+function renderCaptureCard(c: Capture): string {
+  const meta = `${c.tags.map(escapeHtml).join(' · ')}${c.tags.length ? ' · ' : ''}${new Date(c.createdAt).toLocaleString()}`
+  const isConfirming = confirmCaptureDeleteId === c.id
+  const actions = isConfirming
+    ? `<span class="inv-confirm-hint">确认删除？</span>` +
+      `<button class="inv-act inv-danger" data-capture-del="${c.id}">确认</button>` +
+      `<button class="inv-act" data-capture-cancel="1">取消</button>`
+    : `<button class="inv-act" data-capture-promote="${c.id}" title="转为任务">转任务</button>` +
+      `<button class="inv-act inv-danger-ghost" data-capture-del-ask="${c.id}">删除</button>`
+  return `<div class="inv-card">${escapeHtml(c.content)}<div class="inv-meta">${meta}</div><div class="inv-actions">${actions}</div></div>`
+}
+
+/** One issue card with a delete action (task cleanup). */
+function renderIssueCard(i: Issue): string {
+  const isConfirming = confirmIssueDeleteId === i.id
+  const actions = isConfirming
+    ? `<span class="inv-confirm-hint">确认删除任务？</span>` +
+      `<button class="inv-act inv-danger" data-issue-del="${i.id}">确认</button>` +
+      `<button class="inv-act" data-issue-cancel="1">取消</button>`
+    : `<button class="inv-act inv-danger-ghost" data-issue-del-ask="${i.id}">删除</button>`
+  return `<div class="inv-card">${escapeHtml(i.identifier)} [${i.state}] ${escapeHtml(i.title)}<div class="inv-actions">${actions}</div></div>`
+}
+
+const CAPTURES_PER_PAGE = 8
+let capturePage = 0
+let confirmCaptureDeleteId: string | null = null
+let confirmIssueDeleteId: string | null = null
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]!)
@@ -429,6 +494,73 @@ export function mountRightPanel(): () => void {
   }
   captureBtn?.addEventListener('click', doCapture)
   inputEl?.addEventListener('keydown', (e) => { if (e.key === 'Enter') doCapture() })
+
+  // ---- capture/issue card actions (event delegation: cards are re-rendered) ----
+  const onAction = (e: Event): void => {
+    if (panel === null) return
+    const target = e.target as HTMLElement
+    const pageBtn = target.closest<HTMLElement>('.inv-page')
+    if (pageBtn !== null && !(pageBtn as HTMLButtonElement).disabled) {
+      const page = Number(pageBtn.dataset.page)
+      if (Number.isInteger(page) && page >= 0) {
+        capturePage = page
+        refresh()
+      }
+      return
+    }
+    const delAsk = target.closest<HTMLElement>('[data-capture-del-ask]')
+    if (delAsk !== null) {
+      confirmCaptureDeleteId = delAsk.getAttribute('data-capture-del-ask')
+      refresh()
+      return
+    }
+    const delYes = target.closest<HTMLElement>('[data-capture-del]')
+    if (delYes !== null) {
+      const id = delYes.getAttribute('data-capture-del')
+      confirmCaptureDeleteId = null
+      if (id) {
+        void fetch(`/api/track/captures/${encodeURIComponent(id)}`, { method: 'DELETE' })
+          .then(refresh)
+      } else {
+        refresh()
+      }
+      return
+    }
+    const promote = target.closest<HTMLElement>('[data-capture-promote]')
+    if (promote !== null) {
+      const id = promote.getAttribute('data-capture-promote')
+      if (id) {
+        void fetch(`/api/track/captures/${encodeURIComponent(id)}/promote`, { method: 'POST' })
+          .then(refresh)
+      }
+      return
+    }
+    const issueDelAsk = target.closest<HTMLElement>('[data-issue-del-ask]')
+    if (issueDelAsk !== null) {
+      confirmIssueDeleteId = issueDelAsk.getAttribute('data-issue-del-ask')
+      refresh()
+      return
+    }
+    const issueDelYes = target.closest<HTMLElement>('[data-issue-del]')
+    if (issueDelYes !== null) {
+      const id = issueDelYes.getAttribute('data-issue-del')
+      confirmIssueDeleteId = null
+      if (id) {
+        void fetch(`/api/track/issues/${encodeURIComponent(id)}`, { method: 'DELETE' })
+          .then(refresh)
+      } else {
+        refresh()
+      }
+      return
+    }
+    // Cancel: any cancel button clears both confirm states.
+    if (target.closest('[data-capture-cancel], [data-issue-cancel]') !== null) {
+      confirmCaptureDeleteId = null
+      confirmIssueDeleteId = null
+      refresh()
+    }
+  }
+  panel.addEventListener('click', onAction)
 
   // ---- width resizer ----
   const resizer = panel.querySelector<HTMLElement>('.inv-width-resizer')

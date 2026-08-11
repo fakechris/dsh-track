@@ -396,6 +396,53 @@ export function apply(ctx: Context, config?: Config) {
       await ensureStoreOpen()
       json(res, { issues: await store.listIssues() })
     })
+
+    // ---- action routes (prefix kind: exact wins for the base path, so
+    // GET/POST /captures and GET /issues keep their handlers above) ----
+
+    /** Extract the id path segment after `prefix`, or null when absent. */
+    const idFromUrl = (req: IncomingMessage, prefix: string): string | null => {
+      const pathname = new URL(req.url ?? '/', 'http://x').pathname
+      if (!pathname.startsWith(`${prefix}/`)) return null
+      const segments = pathname.slice(prefix.length + 1).split('/').filter(Boolean)
+      return segments.length >= 1 ? decodeURIComponent(segments[0]) : null
+    }
+    const registerAction = (prefix: string, handler: (req: IncomingMessage, res: ServerResponse) => Promise<void> | void) =>
+      serverCtx.httpServer.register({
+        kind: 'prefix',
+        path: `/api/track${prefix}`,
+        handler: (req, res) => Promise.resolve(handler(req, res)).catch((e) => {
+          json(res, { error: e instanceof Error ? e.message : String(e) }, 500)
+        }),
+      })
+
+    // DELETE /api/track/captures/:id — remove a captured thought.
+    // POST  /api/track/captures/:id/promote — promote a capture into an issue.
+    registerAction('/captures', async (req, res) => {
+      await ensureStoreOpen()
+      const id = idFromUrl(req, '/api/track/captures')
+      if (id === null) { json(res, { error: 'capture id required' }, 400); return }
+      if (req.method === 'DELETE') {
+        await store.deleteCapture(id)
+        json(res, { ok: true }); return
+      }
+      if (req.method === 'POST' && new URL(req.url ?? '/', 'http://x').pathname.endsWith('/promote')) {
+        const issue = await store.promoteCaptureToIssue(id, teamKey)
+        json(res, { ok: true, issue }); return
+      }
+      json(res, { error: 'method not allowed' }, 405)
+    })
+    // DELETE /api/track/issues/:id — remove a task (cleanup).
+    registerAction('/issues', async (req, res) => {
+      await ensureStoreOpen()
+      const id = idFromUrl(req, '/api/track/issues')
+      if (id === null) { json(res, { error: 'issue id required' }, 400); return }
+      if (req.method === 'DELETE') {
+        await store.deleteIssue(id)
+        json(res, { ok: true }); return
+      }
+      json(res, { error: 'method not allowed' }, 405)
+    })
     registerRoute('/sync', async (req, res) => {
       await ensureStoreOpen()
       if (req.method !== 'POST') { json(res, { error: 'method not allowed' }, 405); return }
