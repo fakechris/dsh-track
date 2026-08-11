@@ -131,10 +131,23 @@ export async function runSync(deps: SyncDeps, options: SyncOptions): Promise<Syn
   // ---- 3. cluster / segment ----
   let epics: EpicCandidate[] = []
   let issues: IssueCandidate[] = []
+  /** Captures read once and shared by the v2 engine's Phase A (motivation
+   *  context) and Phase 4 (align identity). v1 reads its own list in Phase 4. */
+  let capturesForAlign: Capture[] = []
 
   if (engine === 'v2') {
     // v2: normalize → segment → intent → synthesize → identity → project
     // Phase A: collect candidates + session event profiles across all sessions.
+    // Captures feed motivation context into synthesis (C1) AND capture→issue
+    // identity in align (C2/C3) — read once up front, index by session.
+    capturesForAlign = await store.listCaptures()
+    const capturesBySession = new Map<string, Capture[]>()
+    for (const c of capturesForAlign) {
+      if (!c.sourceSessionId) continue
+      const list = capturesBySession.get(c.sourceSessionId) ?? []
+      list.push(c)
+      capturesBySession.set(c.sourceSessionId, list)
+    }
     const candidates: TaskCandidate[] = []
     const profiles: SessionEventProfile[] = []
     for (const record of records.slice(0, maxSessions)) {
@@ -147,6 +160,11 @@ export async function runSync(deps: SyncDeps, options: SyncOptions): Promise<Syn
         contentKeys: new Set(raws.map((r) => r.contentKey)),
         parentSession: snapshot.session.parentSession,
       })
+      const sessionCaptures = capturesBySession.get(record.header.id) ?? []
+      const motivationContext = sessionCaptures
+        .filter((c) => c.status === 'open' || c.status === 'promoted')
+        .map((c) => `${c.content}${c.context ? `（用户意图：${c.context}）` : ''}`)
+        .join('\n')
       const spans = await aggregateSpans(
         segmentByRules(record.header.id, raws),
         // No LLM judge here: aggregate deterministically (continuation steps +
@@ -167,7 +185,11 @@ export async function runSync(deps: SyncDeps, options: SyncOptions): Promise<Syn
         // Synthesize (LLM) or fall back to the rule candidate.
         let candidate: TaskCandidate | undefined
         if (ctx) {
-          candidate = await synthesizeCandidate(ctx, { ...V2_ROUTE, span })
+          candidate = await synthesizeCandidate(ctx, {
+            ...V2_ROUTE,
+            span,
+            motivationContext: motivationContext || undefined,
+          })
         }
         candidate ??= candidateFromSpan(span)
         if (candidate.kind === 'non_task') continue
@@ -216,8 +238,12 @@ export async function runSync(deps: SyncDeps, options: SyncOptions): Promise<Syn
   const existingEpics = await store.listEpics()
   // Captures feed capture→issue identity: a candidate that is the concrete
   // form of a captured thought updates that issue (promoted) or creates +
-  // promotes it (open) — never a silent duplicate.
-  const captures: Capture[] = await store.listCaptures()
+  // promotes it (open) — never a silent duplicate. In the v2 engine the
+  // capture list was already read in Phase A (for motivation context); reuse
+  // it so align sees the same view.
+  const captures: Capture[] = engine === 'v2'
+    ? capturesForAlign
+    : await store.listCaptures()
   const aligned = alignCandidates(
     issues,
     existingIssues,
@@ -265,9 +291,11 @@ export async function runSync(deps: SyncDeps, options: SyncOptions): Promise<Syn
       }
       await store.upsertIssue(issue)
       created += 1
-      // Promote the matched open capture: it became this issue.
-      if (action.promoteCaptureId) {
-        const capture = captures.find((c) => c.id === action.promoteCaptureId)
+      // Promote the matched open capture(s): they became this issue. C3 groups
+      // same-context captures, so promote all of them (no orphans).
+      const promoteIds = action.promoteCaptureIds ?? (action.promoteCaptureId ? [action.promoteCaptureId] : [])
+      for (const captureId of promoteIds) {
+        const capture = captures.find((c) => c.id === captureId)
         if (capture) {
           await store.upsertCapture({ ...capture, status: 'promoted', promotedToIssueId: issue.id })
           promotedCaptures += 1

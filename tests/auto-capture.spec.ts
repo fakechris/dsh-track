@@ -149,4 +149,74 @@ describe('createAutoCapture', () => {
     emitTool(ctx, 's1', 'todo_write', { todos: [{ content: 'should not capture' }] })
     expect(store.upsertCapture).not.toHaveBeenCalled()
   })
+
+  it('attaches the latest explicit user request as context (A)', () => {
+    const ctx = new Context()
+    const store = makeStore()
+    const dispose = createAutoCapture(ctx, { store })
+
+    // A user request (source.kind === 'user') is the motivation context.
+    ctx.emit('session/event', { id: 's1' }, {
+      type: 'user/message',
+      data: {
+        content: [{ type: 'text', text: '做一个模块，记录所有 track 发起的 llm 数据，计算开销' }],
+        source: { kind: 'user' },
+      },
+    })
+    emitTool(ctx, 's1', 'todo_write', { todos: [{ content: '调研 StreamChunk usage/token 字段' }] })
+
+    expect(store.upsertCapture).toHaveBeenCalledTimes(1)
+    const cap = store.captures[0]!
+    expect(cap.content).toBe('调研 StreamChunk usage/token 字段')
+    expect(cap.context).toContain('记录所有 track 发起的 llm 数据')
+    dispose()
+  })
+
+  it('context is the LATEST user request, not the first (A)', () => {
+    const ctx = new Context()
+    const store = makeStore()
+    const dispose = createAutoCapture(ctx, { store })
+
+    const userMsg = (text: string) => ctx.emit('session/event', { id: 's1' }, {
+      type: 'user/message',
+      data: { content: [{ type: 'text', text }], source: { kind: 'user' } },
+    })
+    userMsg('第一件事：整理文档')
+    userMsg('第二件事：做一个 llm 用量计量模块')
+    emitTool(ctx, 's1', 'bash', { command: 'git checkout -b feat/track-llm-usage' })
+
+    const cap = store.captures[0]!
+    expect(cap.context).toContain('llm 用量计量模块')
+    expect(cap.context).not.toContain('整理文档')
+    dispose()
+  })
+
+  it('plugin/system user/message events do NOT become context (A)', () => {
+    const ctx = new Context()
+    const store = makeStore()
+    const dispose = createAutoCapture(ctx, { store })
+
+    // system-reminder style: no source.kind === 'user' → ignored.
+    ctx.emit('session/event', { id: 's1' }, {
+      type: 'user/message',
+      data: { content: [{ type: 'text', text: 'The following workspace instructions…' }], source: { kind: 'plugin' } },
+    })
+    emitTool(ctx, 's1', 'todo_write', { todos: [{ content: '做 X' }] })
+
+    const cap = store.captures[0]!
+    expect(cap.context).toBeUndefined()
+    dispose()
+  })
+
+  it('context-less capture (no prior user request) still captures (A)', () => {
+    const ctx = new Context()
+    const store = makeStore()
+    const dispose = createAutoCapture(ctx, { store })
+
+    emitTool(ctx, 's1', 'todo_write', { todos: [{ content: '开头的需求' }] })
+    const cap = store.captures[0]!
+    expect(cap.content).toBe('开头的需求')
+    expect(cap.context).toBeUndefined()
+    dispose()
+  })
 })

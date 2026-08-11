@@ -86,6 +86,23 @@ describe('captureOverlaps', () => {
   it('requires at least two shared tokens', () => {
     expect(captureOverlaps(capture('c1', 'hello world'), cand('s1', 'hello there friend'))).toBe(false)
   })
+
+  it('matches via context when content alone does not overlap (C2)', () => {
+    // Content is execution-level ("调研 StreamChunk…"); the candidate is
+    // requirement-level ("LLM 用量计量模块"). Content alone fails, but the
+    // capture's context (the user's explicit request) carries the overlap.
+    const cap = capture('c1', '调研 StreamChunk 结构确认是否有 usage/token 字段', {
+      context: '做一个模块，记录所有 track 发起的 llm 数据，计算我们的开销',
+    })
+    expect(captureOverlaps(cap, cand('s1', 'LLM 用量计量模块'))).toBe(true)
+  })
+
+  it('context does not rescue a genuinely unrelated capture (C2)', () => {
+    const cap = capture('c1', '调研 StreamChunk usage/token 字段', {
+      context: '做一个模块记录 llm 数据计算开销',
+    })
+    expect(captureOverlaps(cap, cand('s1', '修复侧边栏不可见问题'))).toBe(false)
+  })
 })
 
 describe('alignCandidates with captures', () => {
@@ -147,6 +164,48 @@ describe('alignCandidates with captures', () => {
     expect(action.kind).toBe('create')
     if (action.kind === 'create') {
       expect(action.promoteCaptureId).toBeUndefined()
+    }
+  })
+
+  it('promotes ALL same-context open captures when one matches (C3)', () => {
+    // Three captures are fragments of one requirement — same context, but only
+    // the first overlaps the candidate by content. All must be promoted.
+    const ctxText = '做一个模块记录所有 llm 数据计算开销'
+    const aligned = alignCandidates(
+      [cand('s1', 'LLM 用量计量模块')],
+      [],
+      [],
+      [],
+      [
+        capture('cap1', '调研 StreamChunk usage/token 字段', { context: ctxText }),
+        capture('cap2', '新建分支 feat/track-llm-usage', { context: ctxText }),
+        capture('cap3', '探索 dsh 仓库整体结构', { context: ctxText }),
+      ],
+    )
+    const action = aligned.actions[0]!
+    expect(action.kind).toBe('create')
+    if (action.kind === 'create') {
+      expect(action.promoteCaptureIds).toEqual(['cap1', 'cap2', 'cap3'])
+    }
+  })
+
+  it('does NOT group captures without context (C3)', () => {
+    const aligned = alignCandidates(
+      [cand('s1', 'LLM 用量计量模块')],
+      [],
+      [],
+      [],
+      [
+        capture('cap1', 'LLM 用量计量模块'), // matches by content, no context
+        capture('cap2', '新建分支 feat/other', { context: '无关需求' }), // different context, no match
+      ],
+    )
+    const action = aligned.actions[0]!
+    expect(action.kind).toBe('create')
+    if (action.kind === 'create') {
+      // cap1 has no context → the group is just itself; cap2 carries a
+      // DIFFERENT context and does not match → only cap1 is promoted.
+      expect(action.promoteCaptureIds).toEqual(['cap1'])
     }
   })
 })

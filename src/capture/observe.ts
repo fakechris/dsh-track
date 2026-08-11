@@ -7,17 +7,23 @@
  * two signals that are reliable by construction, with zero model cost:
  *
  *  - todo_write (planning path): an agent that plans a work unit issues a
- *    todo_write whose first entry is the requirement summary
- *    ("Create feature worktree (feat/right-panel-actions)").
+ *    todo_write whose FIRST entry is the requirement summary. Only the first
+ *    change of the first entry captures once (B — a later refresh is the same
+ *    requirement's execution, not a new thought).
  *  - git branch creation (execution path): `git worktree add -b`, `git
  *    checkout -b`, `git switch -c` carry the requirement in the branch name
  *    ("feat/track-observability").
  *
  * Both are exact pattern matches on structured fields — no LLM, no semantic
- * guesswork, no per-message cost. Dedup: one capture per session for
- * todo_write; one per branch name for git. Captures land with
- * `source: 'session'` and an `auto:*` tag so they are distinguishable from
- * explicit `capture_thought` calls.
+ * guesswork, no per-message cost. Captures land with `source: 'session'` and
+ * an `auto:*` tag so they are distinguishable from explicit `capture_thought`
+ * calls.
+ *
+ * Motivation context (A): every capture carries `context` = the most recent
+ * explicit user request (user/message with source.kind === 'user') in the
+ * session, so an execution-level capture ("调研 StreamChunk usage/token 字段")
+ * keeps its "why" ("做一个模块记录所有 llm 数据计算开销"). The observer keeps
+ * a per-session one-entry cache of the latest user request.
  *
  * Reentrancy: our own appends (track/* events) never match the two signals.
  * @module @deepseek-ai/dsh-track/capture/observe
@@ -51,18 +57,26 @@ interface TodoWriteArgs {
   todos?: Array<{ content?: string }>
 }
 
+/** One user/message event's data. */
+interface UserMessageData {
+  content?: Array<{ type?: string; text?: string }>
+  source?: { kind?: string }
+}
+
 /**
  * Wire the rule-based capture observer onto session/event. Returns a
  * disposer that unregisters the listener.
  */
 export function createAutoCapture(ctx: Context, deps: { store: TrackStore }, options: AutoCaptureOptions = {}): () => void {
   const tag = options.tag ?? DEFAULT_TAG
-  /** sessionId → captured (todo_write dedup: first todo_write per session). */
+  /** sessionId → captured (todo_write dedup: first change of first entry per session). */
   const todoSeen = new Set<string>()
   /** branch → captured (git dedup: each branch name once, globally). */
   const branchSeen = new Set<string>()
+  /** sessionId → most recent explicit user request (motivation context, A). */
+  const lastUserRequest = new Map<string, string>()
 
-  const capture = (sessionId: string | undefined, content: string, tags: string[]): void => {
+  const capture = (sessionId: string | undefined, content: string, tags: string[], context?: string): void => {
     void deps.store.upsertCapture({
       id: makeId('capture'),
       content,
@@ -70,15 +84,34 @@ export function createAutoCapture(ctx: Context, deps: { store: TrackStore }, opt
       sourceSessionId: sessionId,
       status: 'open',
       tags,
+      context,
       createdAt: new Date().toISOString(),
     }).catch(() => { /* capture is best-effort; never break the stream */ })
   }
 
   const onEvent = (session: unknown, event: { type: string; data?: unknown }): void => {
+    const sessionId = (session as { id?: string } | undefined)?.id
+
+    // Track the most recent explicit user request as motivation context (A).
+    // Runs for every event type so the cache is warm when a signal fires.
+    if (event.type === 'user/message') {
+      const data = event.data as UserMessageData | undefined
+      const kind = data?.source?.kind
+      if (kind === 'user' && sessionId !== undefined) {
+        const text = (data?.content ?? [])
+          .filter((c) => c.type === 'text')
+          .map((c) => c.text ?? '')
+          .join('')
+          .trim()
+        if (text) lastUserRequest.set(sessionId, text.slice(0, 200))
+      }
+      return
+    }
+
     if (event.type !== 'tool/call') return
     const data = event.data as ToolCallData | undefined
     if (!data || typeof data.name !== 'string') return
-    const sessionId = (session as { id?: string } | undefined)?.id
+    const context = sessionId !== undefined ? lastUserRequest.get(sessionId) : undefined
 
     if (data.name === 'todo_write' && sessionId !== undefined && !todoSeen.has(sessionId)) {
       todoSeen.add(sessionId)
@@ -88,7 +121,7 @@ export function createAutoCapture(ctx: Context, deps: { store: TrackStore }, opt
         first = parsed.todos?.[0]?.content
       } catch { /* malformed arguments — skip */ }
       if (first && first.trim()) {
-        capture(sessionId, first.trim(), [tag, 'todo'])
+        capture(sessionId, first.trim(), [tag, 'todo'], context)
       }
       return
     }
@@ -104,7 +137,7 @@ export function createAutoCapture(ctx: Context, deps: { store: TrackStore }, opt
         const branch = match[1]!
         if (!branchSeen.has(branch) && !SKIP_BRANCH.has(branch)) {
           branchSeen.add(branch)
-          capture(sessionId, `新建分支 ${branch}`, [tag, 'git-branch'])
+          capture(sessionId, `新建分支 ${branch}`, [tag, 'git-branch'], context)
         }
       }
     }
