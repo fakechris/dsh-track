@@ -39,6 +39,29 @@ dsh web
 | `track_list_issues(team_id?, state?)` | list issues |
 | `track_sync_history(workspace?, since?, dry_run?, max_sessions?, engine?)` | fold workspace session history into epic/issue candidates (dry-run by default) |
 | `track_usage(since?)` | report LLM cost incurred by the track engine: request counts, input/output/cache/reasoning tokens, wall time, estimated cost per provider/model route |
+| `track_backfill_captures()` | backfill motivation context on legacy open captures: fills the context of pre-#20 captures from their source session logs (most recent explicit user request); idempotent |
+
+## Capture motivation context
+
+Auto-capture (`capture/observe.ts`) watches the structured tool stream for
+execution signals (first todo_write entry, git branch creation). To keep the
+capture wall from becoming a list of context-free fragments ("调研 StreamChunk
+usage/token 字段" without knowing it serves cost metering), every capture
+carries **context = the session's most recent explicit user request**
+(`source.kind === 'user'`):
+
+- live: the observer keeps a per-session cache and attaches it at capture time (A)
+- continued sessions (post-restart splice): `seedContext` backfills the most
+  recent user request from the persisted log (#21)
+- legacy: `track_backfill_captures` one-shot backfill for captures created
+  before #20 (#22)
+
+The v2 pipeline consumes context in three places: synthesis feeds it to the
+LLM (titles lift from execution level to requirement level, e.g. "调研
+StreamChunk…为 LLM 用量记录模块做准备"); align's `captureOverlaps` matches
+content OR context (execution-level captures map to their requirement
+candidate); same-context captures promote as a group (fragments of one
+requirement fold into one issue — no orphans).
 
 ## LLM usage ledger
 
