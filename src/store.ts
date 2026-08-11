@@ -15,7 +15,6 @@ import type { KvFacet, KvUnit, KvUnitDescriptor } from '@deepseek-ai/dsh-storage
 import {
   TRACK_UNIT,
   type Capture,
-  type Decision,
   type Epic,
   type TrackGlobal,
   type Issue,
@@ -234,20 +233,6 @@ export class TrackStore {
   await this.ready()
     const links = await this.listLinks()
     return links.filter((l) => l.fromId === id || l.toId === id)
-  }
-
-  // ---- decisions ----
-
-  async listDecisions(status?: Decision['status']): Promise<Decision[]> {
-  await this.ready()
-    const { tables } = await this.unit.loadAll()
-    const ds = Object.values(tables.decisions ?? {}) as Decision[]
-    return status ? ds.filter((d) => d.status === status) : ds
-  }
-
-  async upsertDecision(decision: Decision): Promise<void> {
-  await this.ready()
-    await this.chain('decisions', () => this.unit.putRecord('decisions', decision.id, decision))
   }
 }
 

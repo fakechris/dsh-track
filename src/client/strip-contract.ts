@@ -5,10 +5,8 @@
  * @module @deepseek-ai/dsh-track/client/strip
  */
 
-/** Track strip props: pending decision and capture counts. */
+/** Track strip props: open capture count. */
 export interface TrackStripProps {
-  /** Pending (unanswered) decision points across sessions. */
-  decisions: number
   /** Open captures in the capture wall. */
   captures: number
 }
