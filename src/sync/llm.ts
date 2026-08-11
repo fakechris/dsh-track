@@ -23,7 +23,7 @@
  * @module @deepseek-ai/dsh-track/sync/llm
  */
 
-import type { Context } from 'cordis'
+import type { Context } from '@deepseek-ai/cordis'
 import { BlockAssembler } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, Message, StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { LlmUsageRecord } from '../types.ts'

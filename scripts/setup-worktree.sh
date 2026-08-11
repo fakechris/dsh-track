@@ -41,9 +41,10 @@ for p in session storage storage-json system-prompt tools llm agent; do
   [ -d "$src" ] || src="$DSH/packages/$p/$p" 2>/dev/null
   [ -d "$src" ] && ln -sfn "$src" "$REPO/node_modules/@deepseek-ai/dsh-$p" 2>/dev/null
 done
-# cordis 双名 relink（官方策略：源码用裸 cordis，npm 发布用 @deepseek-ai/cordis）：
-#   - node_modules/cordis           → 源码 import 解析 + DSH 槽 declare module 'cordis' 扩展生效
-#   - node_modules/@deepseek-ai/cordis → peer 声明（npm 生态真名）校验
+# cordis relink（20260811 起官方源码与 npm 生态均用 @deepseek-ai/cordis；裸 cordis
+# 仅为 0810 及更早快照的历史兼容）：
+#   - node_modules/@deepseek-ai/cordis → 源码 import 解析（真名）
+#   - node_modules/cordis           → 旧裸名兼容（0810 及更早快照用）
 mkdir -p "$REPO/node_modules/@deepseek-ai"
 ln -sfn "$DSH/vendor/cordis" "$REPO/node_modules/cordis" 2>/dev/null
 ln -sfn "$DSH/vendor/cordis" "$REPO/node_modules/@deepseek-ai/cordis" 2>/dev/null

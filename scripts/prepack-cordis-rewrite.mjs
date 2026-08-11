@@ -3,14 +3,11 @@
  * prepack-cordis-rewrite.mjs — 微型复刻官方发布管线：把构建产物里的裸 `cordis`
  * 类型引用改写为 npm 生态真名 `@deepseek-ai/cordis`。
  *
- * 背景（官方策略，2026-08-11 确认）：
- *   - 官方源码（vendor/cordis fork）用裸 `cordis`：DSH 槽的类型扩展挂
- *     `declare module 'cordis'`，生态插件源码必须 import 裸名才能吃到扩展。
- *   - 官方 npm 发布管线把整个 workspace 的 `cordis` 改写为 `@deepseek-ai/cordis`
- *     （发布产物 .d.ts 即 `declare module '@deepseek-ai/cordis'`，peer 也是真名）。
- *   - dsh-track 独立发布（npm pack），没有官方管线，因此在本脚本内复刻改写：
- *     仅处理 lib/types/**\/*.d.ts 里的 `from 'cordis'` → `from '@deepseek-ai/cordis'`。
- *     运行时（lib/*.js）零 cordis 引用（全是 import type，编译后被擦除），无需改写。
+ * 背景（2026-08-11 迁移）：官方 20260811 快照起源码与 npm 生态均使用
+ * `@deepseek-ai/cordis`（仓库内 919 处裸 `cordis` 导入全部迁移），dsh-track 源码
+ * 也已改为直接 import 真名。本脚本保留为**幂等安全网**：仅清理构建产物里可能残留的
+ * 旧裸名引用（lib/types/**\/*.d.ts 的 `from 'cordis'` → `from '@deepseek-ai/cordis'`），
+ * 新构建产物本应已全为真名，重复执行无副作用。
  *
  * 幂等：重复执行安全（已经改写过的不会再改）。
  */

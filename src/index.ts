@@ -13,7 +13,7 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import type { Context } from 'cordis'
+import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { KvFacet } from '@deepseek-ai/dsh-storage'
 // Type-only: pulls the ctx.httpServer Context merge from dsh-host-webserver.
@@ -21,7 +21,6 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import { TrackStore, makeId } from './store.ts'
 import type { Capture, Decision, Issue, LlmUsageRecord } from './types.ts'
 import { runSync } from './sync/run.ts'
-import { createAutoSync } from './sync/auto.ts'
 import { createAutoCapture } from './capture/observe.ts'
 import { backfillCaptureContext } from './capture/backfill.ts'
 import { latestUserRequest, type ContextSessionQuery } from './capture/context.ts'
@@ -191,12 +190,12 @@ export function apply(ctx: Context, config?: Config) {
         status: 'pending',
         createdAt: new Date().toISOString(),
       }
-      // Durable in-session trace: the decision is a session event. Deliberately
-      // NOT persisted to the track store — the decision's value is the
-      // conversation itself (the user answers inline); a cross-session
-      // decision list adds no management value and would only re-surface
-      // already-answered items (decision-point removal, 2026-08-11).
-      exec.agent.session.append('track/decision', decision)
+      // The decision's value is the conversation itself (the user answers
+      // inline). Deliberately NOT persisted to the track store AND no longer
+      // appended to the session log: the 20260811 harness refuses to resume a
+      // session containing an unknown (out-of-repo) event type, and the
+      // session-log trace was never consumed by anything (decision-point
+      // removal, 2026-08-11).
       audit('report_decision_point', exec, true, decision.id)
       return (
         `Decision point raised: ${decision.id}\n`
@@ -416,26 +415,6 @@ export function apply(ctx: Context, config?: Config) {
     },
     presentCall: () => ({ card: 'generic', title: 'Backfill capture contexts', kind: 'other', rawInput: 'all legacy open captures' }),
   }))
-
-  // ---- session event subscription: capture derived requirements ----
-  // The engine observes session events so derived work can be surfaced, but it
-  // does NOT auto-create issues — triage stays human/agent confirmed. Phase 0b:
-  // after a workspace goes idle, auto-run a DRY-RUN sync and append a
-  // `track/sync-preview` event so the agent can surface candidates to the
-  // user. Write-back is never automatic. Registered as an effect so cordis
-  // runs the disposer (timer cleanup) when the plugin fiber is disposed.
-  ctx.effect(async () => {
-    const disposeAutoSync = createAutoSync(ctx, {
-      store,
-      getSessionQuery: () => getSessionQuery(ctx),
-      runSync: (options: SyncOptions) =>
-        runSync(
-          { sessionQuery: getSessionQuery(ctx) as SyncReportDeps['sessionQuery'], store, ctx },
-          options,
-        ),
-    })
-    return () => disposeAutoSync()
-  })
 
   // ---- rule-based auto-capture: todo_write + git branch signals ----
   // Zero-cost determinism (no LLM): the capture_thought tool almost never
