@@ -7,10 +7,10 @@
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
   "scripts": {
-    "build": "/Users/chris/.dsh/source/current/node_modules/typescript/bin/tsc -p tsconfig.json && /Users/chris/.dsh/source/current/node_modules/.bin/tsdown -c tsdown.client.config.ts && node -e \"require('fs').renameSync('lib/client.cjs','lib/client.js')\"",
+    "build": "node scripts/dsh-env.mjs tsc -p \"${DSH_TSCONFIG:-tsconfig.json}\" && node scripts/dsh-env.mjs tsdown -c tsdown.client.config.ts && node -e \"require('fs').renameSync('lib/client.cjs','lib/client.js')\"",
     "prepack": "npm run build",
-    "test": "/Users/chris/.dsh/source/current/node_modules/.bin/vitest run tests",
-    "typecheck": "/Users/chris/.dsh/source/current/node_modules/typescript/bin/tsc -p tsconfig.json --noEmit"
+    "test": "node scripts/dsh-env.mjs vitest run tests",
+    "typecheck": "node scripts/dsh-env.mjs tsc -p \"${DSH_TSCONFIG:-tsconfig.json}\" --noEmit"
   },
   "peerDependencies": {
     "@deepseek-ai/dsh-session": "*",

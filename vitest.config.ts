@@ -2,11 +2,16 @@
  * Standalone vitest config: alias @deepseek-ai/dsh-* peer packages to the
  * running DSH checkout's built lib so runtime imports resolve outside the
  * workspace (same strategy as the community dsh-toolkit repos).
+ *
+ * DSH_SOURCE selects which checkout the aliases point at — default is the
+ * live install (~/.dsh/source/current); the A/B snapshot rotation
+ * (dsh-snapshot-ab) sets it to a candidate slot to test against the next
+ * daily snapshot before cutover.
  */
 import { defineConfig } from 'vitest/config'
 import { fileURLToPath } from 'node:url'
 
-const DSH = '/Users/chris/.dsh/source/current'
+const DSH = process.env.DSH_SOURCE ?? '/Users/chris/.dsh/source/current'
 
 export default defineConfig({
   resolve: {
