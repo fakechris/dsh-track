@@ -102,16 +102,46 @@ describe('backfillCaptureContext', () => {
 
   it('skips captures that already have context (idempotent)', async () => {
     const store = makeStore([
-      cap('c1', { sourceSessionId: 's1', context: '已有' }),
+      cap('c1', { sourceSessionId: 's1', context: '已有的完整动机：跨会话记忆方案调研与暂缓决策' }),
       cap('c2', { sourceSessionId: 's2' }),
     ])
     const sq = sessionQuery({
       s2: [userMsg('第二个 session 的完整需求：实现任务分组')],
     })
     const result = await backfillCaptureContext(store, sq)
-    expect(result.scanned).toBe(1) // c1 有 context，不算
+    expect(result.scanned).toBe(1) // c1 有真 context，不算
     expect(result.filled).toBe(1)
     expect(store.upserted).toHaveLength(1)
+  })
+
+  it('replaces a terse-ack context with the full instruction (re-run under the new rule)', async () => {
+    // Context "pr merge" was filled by the OLD "latest request" rule — it is
+    // a terse ack, not motivation. Backfill must re-scan and replace it.
+    const store = makeStore([
+      cap('c1', { sourceSessionId: 's1', context: 'pr merge' }),
+    ])
+    const sq = sessionQuery({
+      s1: [
+        userMsg('做一个模块，记录所有 track 发起的 llm 数据，计算开销'),
+        userMsg('pr merge'),
+      ],
+    })
+    const result = await backfillCaptureContext(store, sq)
+    expect(result.scanned).toBe(1)
+    expect(result.filled).toBe(1)
+    expect(store.upserted[0]!.context).toBe('做一个模块，记录所有 track 发起的 llm 数据，计算开销')
+  })
+
+  it('leaves a real context untouched even when the session has a newer ack', async () => {
+    const store = makeStore([
+      cap('c1', { sourceSessionId: 's1', context: '完整动机：实现任务分组功能' }),
+    ])
+    const sq = sessionQuery({
+      s1: [userMsg('完整动机：实现任务分组功能'), userMsg('可以')],
+    })
+    const result = await backfillCaptureContext(store, sq)
+    expect(result.scanned).toBe(0) // real context → not a candidate
+    expect(result.filled).toBe(0)
   })
 
   it('skips captures without a source session, and counts skipped for no-request sessions', async () => {
