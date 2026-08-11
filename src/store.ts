@@ -128,6 +128,54 @@ export class TrackStore {
       this.unit.putRecord('captures', capture.id, capture))
   }
 
+  async getCapture(id: string): Promise<Capture | undefined> {
+  await this.ready()
+    const { tables } = await this.unit.loadAll()
+    return (tables.captures ?? {})[id] as Capture | undefined
+  }
+
+  async deleteCapture(id: string): Promise<void> {
+  await this.ready()
+    await this.chain('captures', () => this.unit.deleteRecord('captures', id))
+  }
+
+  /**
+   * Promote an open capture into a real issue: mint the issue from the
+   * capture content and flip the capture to `promoted` with the issue id
+   * attached (the same dedup contract the sync align pass uses).
+   * @returns the freshly created issue.
+   */
+  async promoteCaptureToIssue(captureId: string, teamKey = 'INV'): Promise<Issue> {
+  await this.ready()
+    const capture = await this.getCapture(captureId)
+    if (!capture) throw new Error(`capture not found: ${captureId}`)
+    if (capture.status === 'promoted' && capture.promotedToIssueId) {
+      const existing = await this.getIssue(capture.promotedToIssueId)
+      if (existing) return existing
+    }
+    const issue: Issue = {
+      id: makeId('issue'),
+      identifier: await this.nextIdentifier(teamKey),
+      title: capture.content,
+      description: capture.content,
+      priority: 2,
+      state: 'todo',
+      teamId: teamKey,
+      labels: [...capture.tags],
+      linkedSessionIds: capture.sourceSessionId ? [capture.sourceSessionId] : [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+    await this.chain('issues', () => this.unit.putRecord('issues', issue.id, issue))
+    await this.chain('captures', () =>
+      this.unit.putRecord('captures', capture.id, {
+        ...capture,
+        status: 'promoted' as const,
+        promotedToIssueId: issue.id,
+      }))
+    return issue
+  }
+
   // ---- issues ----
 
   async listIssues(teamId?: string, state?: Issue['state']): Promise<Issue[]> {

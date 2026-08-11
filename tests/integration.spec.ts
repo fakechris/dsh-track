@@ -79,4 +79,53 @@ describe('track integration with real storage', () => {
     expect(caps.some((c) => c.id === id)).toBe(true)
     expect(store.isOpen).toBe(true)
   })
+
+  it('deletes a capture from the real unit', async () => {
+    const id = 'track_capture_delete_check'
+    await trackStore.upsertCapture({
+      id,
+      content: 'to be deleted',
+      source: 'user',
+      status: 'open',
+      tags: [],
+      createdAt: new Date().toISOString(),
+    })
+    expect((await trackStore.listCaptures()).some((c) => c.id === id)).toBe(true)
+    await trackStore.deleteCapture(id)
+    expect((await trackStore.listCaptures()).some((c) => c.id === id)).toBe(false)
+  })
+
+  it('promotes a capture into an issue and flips the capture to promoted', async () => {
+    const id = 'track_capture_promote_check'
+    await trackStore.upsertCapture({
+      id,
+      content: 'promote me into a task',
+      source: 'user',
+      status: 'open',
+      tags: ['future'],
+      createdAt: new Date().toISOString(),
+    })
+    const issue = await trackStore.promoteCaptureToIssue(id, 'INV')
+    expect(issue.title).toBe('promote me into a task')
+    expect(issue.identifier).toMatch(/^INV-\d+$/)
+    expect(issue.labels).toContain('future')
+    const after = await trackStore.getCapture(id)
+    expect(after?.status).toBe('promoted')
+    expect(after?.promotedToIssueId).toBe(issue.id)
+  })
+
+  it('promoting an already-promoted capture returns the existing issue (dedup)', async () => {
+    const id = 'track_capture_promote_dedup'
+    await trackStore.upsertCapture({
+      id,
+      content: 'dedup promote',
+      source: 'user',
+      status: 'open',
+      tags: [],
+      createdAt: new Date().toISOString(),
+    })
+    const first = await trackStore.promoteCaptureToIssue(id, 'INV')
+    const second = await trackStore.promoteCaptureToIssue(id, 'INV')
+    expect(second.id).toBe(first.id)
+  })
 })
