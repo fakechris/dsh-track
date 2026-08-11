@@ -22,6 +22,7 @@ import { TrackStore, makeId } from './store.ts'
 import type { Capture, Decision, Issue } from './types.ts'
 import { runSync } from './sync/run.ts'
 import type { SyncOptions, SyncReport, SyncDeps as SyncReportDeps } from './sync/run.ts'
+import { installResumeAutoContinue, type ResumeAutoContinueConfig } from './resume-auto-continue.ts'
 
 export const name = '@deepseek-ai/dsh-track'
 export const inject = ['tools', 'storage']
@@ -30,6 +31,8 @@ export const inject = ['tools', 'storage']
 export interface Config {
   /** Workspace / team key used for Linear-style identifiers (default INV). */
   teamKey?: string
+  /** Resume auto-continue: automatically continue interrupted sessions after a restart. */
+  resumeAutoContinue?: ResumeAutoContinueConfig
 }
 
 /** Default team key when config omits it. */
@@ -72,6 +75,10 @@ function resolveKv(ctx: Context): Promise<KvFacet> {
 
 export function apply(ctx: Context, config?: Config) {
   const teamKey = config?.teamKey ?? DEFAULT_TEAM_KEY
+  // Resume auto-continue: after a restart, an interrupted agent turn continues
+  // automatically (host-side agent/created listener — no browser timing races).
+  const disposers: Array<() => void> = []
+  disposers.push(installResumeAutoContinue(ctx, config?.resumeAutoContinue))
   // HTTP handlers may fire before the store effect opens the unit; keep a
   // lazily-resolved open so the API works regardless of boot ordering.
   let openPromise: Promise<void> | null = null
@@ -92,7 +99,10 @@ export function apply(ctx: Context, config?: Config) {
       console.error('[dsh-track] store open failed:', e)
       throw e
     }
-    return () => store.close()
+    return () => {
+      store.close()
+      for (const dispose of disposers) dispose()
+    }
   })
 
   // ---- capture_thought: drop a thought into the capture wall ----
@@ -285,6 +295,9 @@ export function apply(ctx: Context, config?: Config) {
       if (!sessionQuery) {
         throw new Error('track_sync_history requires the session-query service (mounted by the web profile)')
       }
+      // Probe: does the llm service resolve in the TOOL execution context?
+      const reflect = (ctx as unknown as { reflect?: { get: (n: string, s?: boolean) => unknown } }).reflect
+      console.error('[dsh-track-tool-probe]', JSON.stringify({ llm: reflect?.get('llm', false) ? 'present' : 'MISSING', sq: !!sessionQuery, cwd: exec.agent.session.header.cwd }))
       const workspace = args.workspace ?? exec.agent.session.header.cwd
       if (!workspace) {
         throw new Error('track_sync_history needs a workspace cwd: pass workspace= or run from a session with one')
