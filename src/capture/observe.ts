@@ -33,7 +33,7 @@
  * @module @deepseek-ai/dsh-track/capture/observe
  */
 
-import type { Context } from 'cordis'
+import type { Context } from '@deepseek-ai/cordis'
 import { makeId } from '../store.ts'
 import type { TrackStore } from '../store.ts'
 import { isShortAck } from './context.ts'

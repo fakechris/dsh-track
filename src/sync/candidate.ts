@@ -10,7 +10,7 @@
  * @module @deepseek-ai/dsh-track/sync/candidate
  */
 
-import type { Context } from 'cordis'
+import type { Context } from '@deepseek-ai/cordis'
 import type { EvidenceSpan } from './segment.ts'
 import { getLlm, llmJson } from './llm.ts'
 import type { Issue } from '../types.ts'

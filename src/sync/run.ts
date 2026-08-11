@@ -11,7 +11,7 @@
  */
 
 import type { SessionQueryService } from '@deepseek-ai/dsh-session-query'
-import type { Context } from 'cordis'
+import type { Context } from '@deepseek-ai/cordis'
 import type { TrackStore } from '../store.ts'
 import type { Capture, Issue } from '../types.ts'
 import { alignCandidates, mergeIntoIssue, type IssueAction } from './align.ts'

@@ -11,7 +11,7 @@
  * @module @deepseek-ai/dsh-track/sync/intent
  */
 
-import type { Context } from 'cordis'
+import type { Context } from '@deepseek-ai/cordis'
 import { getLlm, llmJson } from './llm.ts'
 
 export type RequestIntent = 'requirement' | 'directive' | 'interruption'

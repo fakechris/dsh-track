@@ -17,7 +17,7 @@
  * @module @deepseek-ai/dsh-track/sync/identity
  */
 
-import type { Context } from 'cordis'
+import type { Context } from '@deepseek-ai/cordis'
 import { getLlm, llmJson } from './llm.ts'
 import type { TaskCandidate } from './candidate.ts'
 import { normalizeTitle } from './cluster.ts'
