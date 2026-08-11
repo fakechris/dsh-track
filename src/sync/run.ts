@@ -18,7 +18,7 @@ import { alignCandidates, mergeIntoIssue, type IssueAction } from './align.ts'
 import { clusterWorklogs, normalizeTitle, type EpicCandidate, type IssueCandidate } from './cluster.ts'
 import { extractWorklog } from './extract.ts'
 import { normalizeLog } from './raw-event.ts'
-import { segmentByRules, type EvidenceSpan } from './segment.ts'
+import { segmentByRules, aggregateSpans, type EvidenceSpan } from './segment.ts'
 import { resolveSpanIntent } from './intent.ts'
 import { candidateFromSpan, synthesizeCandidate, projectToIssueCandidate, type TaskCandidate } from './candidate.ts'
 import { detectForkCopies, forkGroups, mergeCandidates, type SessionEventProfile } from './identity.ts'
@@ -145,7 +145,12 @@ export async function runSync(deps: SyncDeps, options: SyncOptions): Promise<Syn
         contentKeys: new Set(raws.map((r) => r.contentKey)),
         parentSession: snapshot.session.parentSession,
       })
-      const spans = segmentByRules(record.header.id, raws)
+      const spans = await aggregateSpans(
+        segmentByRules(record.header.id, raws),
+        // No LLM judge here: aggregate deterministically (continuation steps +
+        // token overlap). LLM re-merge happens later in mergeCandidates (P3
+        // identity), which already runs across the whole candidate set.
+      )
       for (const span of spans) {
         // Intent layering: drop directives/interruptions unless they state a goal.
         // Segment-level judgement (all requests, not just the lead) so a span
@@ -187,7 +192,7 @@ export async function runSync(deps: SyncDeps, options: SyncOptions): Promise<Syn
     void forkSessionIds
 
     // Phase C: merge candidates that are the same work line.
-    const { groups, standalone } = await mergeCandidates(ctx, deduped, { ...V2_ROUTE })
+    const { groups, standalone } = await mergeCandidates(ctx, deduped, { ...V2_ROUTE, adjacentOnly: true })
     const merged: TaskCandidate[] = groups.map((g) => g.canonical).concat(standalone)
     void forkSessionIds
     issues = merged.map((c) => projectToIssueCandidate(c))

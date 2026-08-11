@@ -130,3 +130,114 @@ export function segmentByRules(sessionId: string, events: readonly RawEvent[]): 
 
   return spans
 }
+
+// ── Session-internal aggregation (fixes over-segmentation, 2026-08-11) ─────
+
+/**
+ * Aggregate adjacent spans that belong to the same work line.
+ *
+ * Over-segmentation root cause (verified on 6c5c0b49: 29 spans for one work
+ * line): hard split signals (long-idle, interrupted-turn) fire on
+ * *continuation steps* of the same task — e.g. "看一下发生了什么" after "接
+ * 入 runSync" is a step, not a new task. This pass re-merges adjacent spans
+ * whose content overlaps (deterministic) or whose titles are similar enough
+ * (LLM-judged when available).
+ *
+ * Strategy: greedy left-to-right merge. For each adjacent pair, decide merge
+ * by, in order:
+ *   1. strong re-merge signal: later span's lead request is a continuation
+ *      phrase ("继续", "下一步", "接着", bare "p2"...) AND its request count
+ *      is small (a step, not a new thread);
+ *   2. title/token overlap above threshold (deterministic);
+ *   3. LLM judge (SAME_TASK / CONTINUATION_OF) — only when `judge` provided.
+ *
+ * Merging concatenates requests and extends the span range; the merged span
+ * keeps the earlier leadRequest and seqStart.
+ */
+export interface SpanAggregateOptions {
+  /** Minimum overlap ratio (token-level) to merge deterministically. */
+  overlapThreshold?: number
+  /** If provided, confirm ambiguous adjacent merges via this judge. */
+  judge?: (a: EvidenceSpan, b: EvidenceSpan) => Promise<boolean> | boolean
+}
+
+/** Continuation phrases that mark a step within a work line, not a new task. */
+const CONTINUATION_HINTS = ['继续', '下一步', '接着', '再', '然后', '完了', '好', '嗯', '对', 'p2', 'p3', '继续查', '还有呢', '怎么样了', '看看', '怎么了', '发生了什么', '然后呢', '之后呢', '结论', '结果']
+
+/** CJK function words — no topic signal, inflate char-overlap. */
+const CJK_STOP = new Set(
+  '的了着一是在有我没你他她它它们这那这样那样也还有都就被把和与及或个们中上下里来去对好行请让先后已经再也又很太非常所作为从到向跟比如果但而是且并且却只才吧吗啊呢嗯哦呀哦'.split(''),
+)
+
+/**
+ * Character-set overlap of two spans' LEAD requests (topic representatives).
+ *
+ * CJK has no word separators, so `\p{L}+` collapses a whole Chinese sentence
+ * into one token (verified: "修复重启后无法自动拉回的问题" is ONE match).
+ * Character-level sets work for both CJK (per-char) and Latin (per-word via
+ * space-split fallback): we split on spaces AND take CJK chars individually.
+ *
+ * Two guards against false-positive merges (verified on 6c5c0b49: a merged
+ * 22-request span swallowed "重启了，slot a，你看看" via inflated overlap):
+ * 1. compare LEAD requests only — the whole-span char set grows with every
+ *    merged request and eventually overlaps ANY short follow-up;
+ * 2. drop CJK function words, which are shared by unrelated topics.
+ */
+export function spanOverlap(a: EvidenceSpan, b: EvidenceSpan): number {
+  const chars = (s: string) => {
+    const set = new Set<string>()
+    // Latin words (space-delimited) keep whole-word identity.
+    for (const w of s.match(/[A-Za-z0-9]+/g) ?? []) set.add(w.toLowerCase())
+    // CJK chars individually, minus function words.
+    for (const ch of s) if (/[\u4e00-\u9fff]/.test(ch) && !CJK_STOP.has(ch)) set.add(ch)
+    return set
+  }
+  const ta = chars(a.leadRequest)
+  const tb = chars(b.leadRequest)
+  if (ta.size === 0 || tb.size === 0) return 0
+  let inter = 0
+  for (const t of ta) if (tb.has(t)) inter += 1
+  return inter / Math.min(ta.size, tb.size)
+}
+
+/** Greedy left-to-right aggregation of adjacent spans. */
+export async function aggregateSpans(
+  spans: EvidenceSpan[],
+  opts: SpanAggregateOptions = {},
+): Promise<EvidenceSpan[]> {
+  const threshold = opts.overlapThreshold ?? 0.35
+  const judge = opts.judge
+  const result: EvidenceSpan[] = []
+  let i = 0
+  while (i < spans.length) {
+    const cur = spans[i]!
+    let j = i + 1
+    while (j < spans.length) {
+      const next = spans[j]!
+      const leadLower = next.leadRequest.trim().toLowerCase()
+      const isStep = next.requests.length <= 2
+        && (
+          // Hint must OPEN the request — "再看看" mid-sentence is not a step.
+          CONTINUATION_HINTS.some(h => leadLower.startsWith(h))
+          || /[?？]$/.test(leadLower)                    // 疑问句 = 跟进询问
+          || leadLower.length <= 6                        // 极短反馈 = 步骤
+        )
+      const overlap = spanOverlap(cur, next)
+      let shouldMerge = false
+      if (isStep) shouldMerge = true
+      else if (overlap >= threshold) shouldMerge = true
+      else if (judge) shouldMerge = await judge(cur, next)
+      if (!shouldMerge) break
+      // Merge next into cur.
+      cur.requests.push(...next.requests)
+      cur.seqEnd = Math.max(cur.seqEnd, next.seqEnd)
+      cur.interruptedCount += next.interruptedCount
+      cur.todoResetCount += next.todoResetCount
+      cur.openedBy = [...new Set([...cur.openedBy, ...next.openedBy])]
+      j += 1
+    }
+    result.push(cur)
+    i = j
+  }
+  return result
+}

@@ -153,3 +153,31 @@ describe('runSync v2 fork dedup', () => {
     expect(report.issueCandidates.length).toBe(1)
   })
 })
+
+describe('mergeCandidates adjacentOnly', () => {
+  const cand = (id: string, sessionId: string, seqStart: number, title: string): any => ({
+    id, sessionId, span: { seqStart, seqEnd: seqStart + 10 }, kind: 'investigation',
+    authority: 'system_inferred', title, scope: [], nonGoals: [], constraints: [],
+    acceptanceCriteria: [], evidenceRefs: [], confidence: 0.8, decidedBy: 'rule', requests: [title],
+  })
+
+  it('only compares adjacent candidates (same session) — O(n) not O(n²)', async () => {
+    const a = cand('a', 's1', 0, '修复 A')
+    const b = cand('b', 's1', 100, '修复 A')
+    const c = cand('c', 's1', 200, '研究 B')
+    const { groups, standalone } = await mergeCandidates(undefined, [a, b, c], { provider: 'x', model: 'y', adjacentOnly: true })
+    // a↔b same title → SAME_TASK merge; b↔c would not be checked (adjacent only is a-b, then b merged, c standalone)
+    expect(groups.length).toBe(1)
+    expect(standalone.length).toBe(1)
+    expect(standalone[0]!.id).toBe('c')
+  })
+
+  it('does not cross session boundaries in adjacent mode', async () => {
+    const a = cand('a', 's1', 0, '修复 A')
+    const b = cand('b', 's2', 0, '修复 A')
+    const { groups, standalone } = await mergeCandidates(undefined, [a, b], { provider: 'x', model: 'y', adjacentOnly: true })
+    // Different sessions → not adjacent → no merge.
+    expect(groups.length).toBe(0)
+    expect(standalone.length).toBe(2)
+  })
+})
