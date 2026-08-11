@@ -11,7 +11,7 @@
 
 import type { TrackStore } from '../store.ts'
 import type { Capture } from '../types.ts'
-import { latestUserRequest, type ContextSessionQuery } from './context.ts'
+import { latestUserRequest, isShortAck, type ContextSessionQuery } from './context.ts'
 
 export interface BackfillResult {
   /** Captures inspected (open, no context, with a source session). */
@@ -23,8 +23,13 @@ export interface BackfillResult {
 }
 
 /**
- * Backfill `context` on legacy open captures from their source session logs.
- * Idempotent: skips captures that already have context; safe to re-run.
+ * Backfill `context` on open captures from their source session logs.
+ *
+ * Candidates: captures with NO context, OR whose context is a terse
+ * acknowledgement ("pr merge", "CA先做") — those were filled by the earlier
+ * "latest request" rule and are not motivation; re-running under the
+ * "latest FULL instruction" rule replaces them. Real (non-ack) contexts are
+ * left untouched (idempotent). Safe to re-run.
  */
 export async function backfillCaptureContext(
   store: TrackStore,
@@ -32,7 +37,7 @@ export async function backfillCaptureContext(
 ): Promise<BackfillResult> {
   const captures = await store.listCaptures()
   const candidates = captures.filter(
-    (c: Capture) => c.status === 'open' && !c.context && c.sourceSessionId,
+    (c: Capture) => c.status === 'open' && c.sourceSessionId && (!c.context || isShortAck(c.context)),
   )
   let filled = 0
   let skipped = 0
