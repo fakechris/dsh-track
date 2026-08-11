@@ -409,7 +409,31 @@ export function apply(ctx: Context, config?: Config) {
   // structured tool stream and captures planning (todo_write) and execution
   // (git branch creation) signals as captures (2026-08-11).
   ctx.effect(() => {
-    const disposeAutoCapture = createAutoCapture(ctx, { store })
+    // Seed motivation context from the persisted log: after a restart the
+    // continued (spliced) session's earlier user requests happened in the
+    // PREVIOUS process, so the observer's in-memory cache is empty. Backfill
+    // the most recent explicit user request per session (observe.ts seeds
+    // lazily on first signal).
+    const seedContext = async (sessionId: string): Promise<string | undefined> => {
+      const sessionQuery = getSessionQuery(ctx)
+      if (!sessionQuery) return undefined
+      try {
+        const snapshot = await (sessionQuery as { readSession(id: string): Promise<{ events: Array<{ type: string; data?: { content?: Array<{ type?: string; text?: string }>; source?: { kind?: string } } }> }> }).readSession(sessionId)
+        for (const event of [...snapshot.events].reverse()) {
+          if (event.type !== 'user/message') continue
+          const source = event.data?.source
+          if (source?.kind !== 'user') continue
+          const text = (event.data?.content ?? [])
+            .filter((c) => c.type === 'text')
+            .map((c) => c.text ?? '')
+            .join('')
+            .trim()
+          if (text) return text
+        }
+      } catch { /* best-effort */ }
+      return undefined
+    }
+    const disposeAutoCapture = createAutoCapture(ctx, { store, seedContext })
     return () => disposeAutoCapture()
   })
 
