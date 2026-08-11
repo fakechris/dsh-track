@@ -11,7 +11,7 @@ import { normalizeTitle } from './cluster.ts'
 
 /** What to do with one candidate. */
 export type IssueAction =
-  | { kind: 'create'; candidate: IssueCandidate; promoteCaptureId?: string }
+  | { kind: 'create'; candidate: IssueCandidate; promoteCaptureId?: string; promoteCaptureIds?: string[] }
   | { kind: 'update'; candidate: IssueCandidate; existing: Issue; changes: string[] }
   | { kind: 'skip'; candidate: IssueCandidate; existing: Issue; reason: string }
 
@@ -107,9 +107,21 @@ export function alignCandidates(
     // 2. An open capture → create the issue and promote the capture to it.
     const openMatch = openCaptures.find((c) => captureOverlaps(c, candidate))
     if (openMatch) {
-      return { kind: 'create', candidate, promoteCaptureId: openMatch.id }
-    }
-    return { kind: 'create', candidate }
+      // C3 (motivation grouping): captures sharing the same context are one
+      // requirement's fragments ("调研 StreamChunk" + "新建分支 feat/…" +
+      // "探索 dsh 仓库结构" all carry the same user intent). When one matches,
+      // promote ALL open captures with the same context — no orphans left.
+      const sameContext = openMatch.context
+        ? openCaptures.filter((c) => c.context && c.context === openMatch.context)
+        : [openMatch]
+      const ids = Array.from(new Set(sameContext.map((c) => c.id)))
+      return {
+        kind: 'create',
+        candidate,
+        promoteCaptureId: ids[0],
+        promoteCaptureIds: ids,
+      }
+    }    return { kind: 'create', candidate }
   })
 
   const epicActions: AlignResult['epicActions'] = epicCandidates.map((candidate) => {
@@ -166,18 +178,40 @@ function promoteState(existing: IssueState, suggested: IssueState): IssueState {
  * bigrams so multi-character shared substrings count; Latin tokens are words.
  * Low bar on purpose (open captures are sparse) but never matches on empty
  * content or single shared tokens.
+ *
+ * C2 (motivation context): the match surface is `content + context` — the
+ * capture's own words AND the user intent behind it. A capture like "调研
+ * StreamChunk 结构确认是否有 usage/token 字段" alone does not overlap a
+ * candidate titled "LLM 用量计量模块", but its context ("做一个模块记录所有
+ * llm 数据计算开销") does. If either surface matches, the capture maps.
  */
 export function captureOverlaps(capture: Capture, candidate: IssueCandidate): boolean {
-  const captureTokens = contentTokens(capture.content)
-  const candidateTokens = contentTokens(`${candidate.title} ${candidate.description}`)
-  if (captureTokens.size === 0 || candidateTokens.size === 0) return false
+  // Content surface: the capture's own words vs the candidate (conservative
+  // threshold — low bar but never matches on 1 shared token).
+  const contentHit = overlap(capture.content, `${candidate.title} ${candidate.description}`, 0.5)
+  if (contentHit) return true
+  // Context surface (C2): the capture's context is the user's explicit
+  // request — a strong signal. Two shared tokens with the candidate suffices
+  // without the containment bar (context is verbatim user intent, not a
+  // paraphrase whose density varies).
+  if (capture.context) {
+    return overlap(capture.context, `${candidate.title} ${candidate.description}`, 0)
+  }
+  return false
+}
+
+/** Shared-token test: ≥2 shared tokens AND containment ≥ threshold. */
+function overlap(a: string, b: string, containmentThreshold: number): boolean {
+  const ta = contentTokens(a)
+  const tb = contentTokens(b)
+  if (ta.size === 0 || tb.size === 0) return false
   let shared = 0
-  for (const token of candidateTokens) {
-    if (captureTokens.has(token)) shared += 1
+  for (const token of tb) {
+    if (ta.has(token)) shared += 1
   }
   if (shared < 2) return false
-  const containment = shared / Math.min(captureTokens.size, candidateTokens.size)
-  return containment >= 0.5
+  const containment = shared / Math.min(ta.size, tb.size)
+  return containment >= containmentThreshold
 }
 
 /** Normalize content into comparable tokens: CJK bigrams + latin words. */

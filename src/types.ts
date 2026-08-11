@@ -20,6 +20,12 @@ export interface Capture {
   status: 'open' | 'promoted' | 'archived' | 'rejected'
   /** Free-form tags for clustering. */
   tags: string[]
+  /** Motivation context: the most recent explicit user request behind this
+   *  capture (source.kind === 'user'), so an execution-level capture ("调研
+   *  StreamChunk usage/token 字段") carries its "why" ("做一个模块记录所有
+   *  llm 数据计算开销"). Filled by the auto-observer; empty for captures
+   *  with no preceding user request. */
+  context?: string
   /** ISO 8601 creation time. */
   createdAt: string
   /** Issue id when this capture was promoted. */

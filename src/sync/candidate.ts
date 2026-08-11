@@ -172,19 +172,34 @@ export function candidateFromSpan(span: EvidenceSpan): TaskCandidate {
 /** LLM synthesis for one span. Returns undefined on failure (downgrade to rule). */
 export async function synthesizeCandidate(
   ctx: Context,
-  opts: { provider: string; model: string; span: EvidenceSpan; workspaceContext?: string },
+  opts: {
+    provider: string
+    model: string
+    span: EvidenceSpan
+    workspaceContext?: string
+    /**
+     * Motivation context: captures from this session (content + their `context`
+     * — the user's explicit request behind them). Lets the LLM synthesize a
+     * title at the requirement level ("LLM 用量计量模块") instead of the
+     * execution level ("调研 StreamChunk usage/token 字段").
+     */
+    motivationContext?: string
+  },
 ): Promise<TaskCandidate | undefined> {
   const llm = getLlm(ctx)
   if (!llm) return undefined
   const context = opts.workspaceContext
     ? `Workspace context:\n${opts.workspaceContext.slice(0, 1500)}\n\n`
     : ''
+  const motivation = opts.motivationContext
+    ? `Captured work context for this session (user intent behind the work):\n${opts.motivationContext.slice(0, 1500)}\n\n`
+    : ''
   const requests = opts.span.requests.map((r, i) => `${i + 1}. ${r.slice(0, 400)}`).join('\n')
   const json = await llmJson(llm, {
     provider: opts.provider,
     model: opts.model,
     system: CANDIDATE_SYSTEM,
-    prompt: `${context}Session evidence span (${opts.span.seqStart}..${opts.span.seqEnd}):\n${requests}\n\nSynthesize ONE task candidate.`,
+    prompt: `${context}${motivation}Session evidence span (${opts.span.seqStart}..${opts.span.seqEnd}):\n${requests}\n\nSynthesize ONE task candidate.`,
     requiredKeys: ['kind', 'title'],
     maxTokens: 2000,
     temperature: 0.2,
