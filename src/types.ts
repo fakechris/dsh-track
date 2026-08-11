@@ -139,8 +139,8 @@ export interface TrackGlobal {
  */
 export interface AuditEntry {
   id: string
-  /** The tool that ran: capture_thought | report_decision_point | track_create_issue | track_sync_history | track_usage. */
-  tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history' | 'track_usage'
+  /** The tool that ran: capture_thought | report_decision_point | track_create_issue | track_sync_history | track_usage | track_backfill_captures. */
+  tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history' | 'track_usage' | 'track_backfill_captures'
   /** Epoch ms of the invocation. */
   ts: number
   /** Owning agent session id when available. */
