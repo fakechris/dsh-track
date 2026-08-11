@@ -55,3 +55,10 @@ metadata:
 - 查已有任务避免重复：先 track_list_issues 再创建
 - 任务状态以 Track 为权威（契约字段：验收标准/优先级/依赖）；session 内 todo 是执行细节
 - 衍生需求（前置依赖、跨项目 bug、"顺便做 X"）先识别、建议归属，经用户确认再创建，不自动落 issue
+
+# 历史同步（track_sync_history）
+
+- **用户问"最近的工作/同步到 Track/整理历史"时**：调用 `track_sync_history`，把工作区 session 历史折叠成 issue/epic 候选
+- 参数：`workspace`（默认当前 cwd）、`engine`（推荐 `'v2'`：segment+intent+synthesize 管线，质量远超 v1）、`since`（默认 7 天）
+- **默认 dry_run=true 只看候选清单**；用户确认后再跑 `dry_run=false` 写回（不自动落 issue）
+- 会话中出现 `track/sync-preview` 事件（Phase 0b 自动聚合预览）时：向用户摘要候选，询问是否写回或细看

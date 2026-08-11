@@ -21,6 +21,7 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import { TrackStore, makeId } from './store.ts'
 import type { Capture, Decision, Issue } from './types.ts'
 import { runSync } from './sync/run.ts'
+import { createAutoSync } from './sync/auto.ts'
 import type { SyncOptions, SyncReport, SyncDeps as SyncReportDeps } from './sync/run.ts'
 
 export const name = '@deepseek-ai/dsh-track'
@@ -318,11 +319,22 @@ export function apply(ctx: Context, config?: Config) {
 
   // ---- session event subscription: capture derived requirements ----
   // The engine observes session events so derived work can be surfaced, but it
-  // does NOT auto-create issues — triage stays human/agent confirmed.
-  ctx.on('session/event', (_session, event) => {
-    // Reserved: fold todo/write, plan/mode, goal/change into linked issues.
-    // MVP keeps this as an observation point; auto-aggregation is Phase 0b.
-    void event
+  // does NOT auto-create issues — triage stays human/agent confirmed. Phase 0b:
+  // after a workspace goes idle, auto-run a DRY-RUN sync and append a
+  // `track/sync-preview` event so the agent can surface candidates to the
+  // user. Write-back is never automatic. Registered as an effect so cordis
+  // runs the disposer (timer cleanup) when the plugin fiber is disposed.
+  ctx.effect(async () => {
+    const disposeAutoSync = createAutoSync(ctx, {
+      store,
+      getSessionQuery: () => getSessionQuery(ctx),
+      runSync: (options: SyncOptions) =>
+        runSync(
+          { sessionQuery: getSessionQuery(ctx) as SyncReportDeps['sessionQuery'], store, ctx },
+          options,
+        ),
+    })
+    return () => disposeAutoSync()
   })
 
   // ---- HTTP API for the Web client panel (optional: needs httpServer) ----
