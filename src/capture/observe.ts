@@ -66,8 +66,15 @@ interface UserMessageData {
 /**
  * Wire the rule-based capture observer onto session/event. Returns a
  * disposer that unregisters the listener.
+ *
+ * `deps.seedContext` (optional): on the FIRST event of a session, the observer
+ * has no in-memory context (fresh process — e.g. after a restart, where the
+ * spliced continuation session's earlier user requests happened in the
+ * PREVIOUS process). seedContext backfills the most recent explicit user
+ * request from the persisted session log so a continued session still gets
+ * motivation context. Without it, continued sessions never capture context.
  */
-export function createAutoCapture(ctx: Context, deps: { store: TrackStore }, options: AutoCaptureOptions = {}): () => void {
+export function createAutoCapture(ctx: Context, deps: { store: TrackStore; seedContext?: (sessionId: string) => Promise<string | undefined> }, options: AutoCaptureOptions = {}): () => void {
   const tag = options.tag ?? DEFAULT_TAG
   /** sessionId → captured (todo_write dedup: first change of first entry per session). */
   const todoSeen = new Set<string>()
@@ -75,6 +82,19 @@ export function createAutoCapture(ctx: Context, deps: { store: TrackStore }, opt
   const branchSeen = new Set<string>()
   /** sessionId → most recent explicit user request (motivation context, A). */
   const lastUserRequest = new Map<string, string>()
+  /** sessionIds already seeded from the persisted log (or attempted). */
+  const seeded = new Set<string>()
+
+  /** Ensure the context cache has an entry for the session (seed once from log). */
+  const ensureContext = async (sessionId: string): Promise<void> => {
+    if (lastUserRequest.has(sessionId) || seeded.has(sessionId)) return
+    seeded.add(sessionId)
+    if (!deps.seedContext) return
+    try {
+      const text = await deps.seedContext(sessionId)
+      if (text) lastUserRequest.set(sessionId, text.slice(0, 200))
+    } catch { /* seeding is best-effort */ }
+  }
 
   const capture = (sessionId: string | undefined, content: string, tags: string[], context?: string): void => {
     void deps.store.upsertCapture({
@@ -93,7 +113,8 @@ export function createAutoCapture(ctx: Context, deps: { store: TrackStore }, opt
     const sessionId = (session as { id?: string } | undefined)?.id
 
     // Track the most recent explicit user request as motivation context (A).
-    // Runs for every event type so the cache is warm when a signal fires.
+    // MUST run before pre-warm so a live user/message fills the cache and the
+    // seed (persisted log) is not consulted for an already-warm session.
     if (event.type === 'user/message') {
       const data = event.data as UserMessageData | undefined
       const kind = data?.source?.kind
@@ -107,6 +128,12 @@ export function createAutoCapture(ctx: Context, deps: { store: TrackStore }, opt
       }
       return
     }
+
+    // Pre-warm the context cache for this session (idempotent, fire-and-forget).
+    // In a continued (spliced) session the persisted-log seed resolves during
+    // the many events between splice and the first todo/branch signal, so the
+    // signal below reads a warm cache synchronously.
+    if (sessionId !== undefined) void ensureContext(sessionId)
 
     if (event.type !== 'tool/call') return
     const data = event.data as ToolCallData | undefined

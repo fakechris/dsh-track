@@ -219,4 +219,59 @@ describe('createAutoCapture', () => {
     expect(cap.context).toBeUndefined()
     dispose()
   })
+
+  it('seeds context from the persisted log on first signal (continued session)', async () => {
+    const ctx = new Context()
+    const store = makeStore()
+    // Continued (spliced) session: no user/message flows through this process,
+    // so seedContext backfills from the log.
+    const seedContext = vi.fn(async () => '重启前的用户请求：做一个 llm 用量计量模块')
+    const dispose = createAutoCapture(ctx, { store, seedContext })
+
+    // Realistic splice: many events pass BEFORE the first signal — each
+    // pre-warms the cache; the seed resolves before the todo_write lands.
+    ctx.emit('session/event', { id: 's1' }, { type: 'turn/start' })
+    await new Promise((r) => setTimeout(r, 10))
+    expect(seedContext).toHaveBeenCalledWith('s1')
+
+    emitTool(ctx, 's1', 'todo_write', { todos: [{ content: '调研 StreamChunk usage/token 字段' }] })
+    const cap = store.captures[0]!
+    expect(cap.content).toBe('调研 StreamChunk usage/token 字段')
+    expect(cap.context).toContain('llm 用量计量模块')
+    dispose()
+  })
+
+  it('seeds only once per session (seedContext not called repeatedly)', async () => {
+    const ctx = new Context()
+    const store = makeStore()
+    const seedContext = vi.fn(async () => '用户意图 A')
+    const dispose = createAutoCapture(ctx, { store, seedContext })
+
+    ctx.emit('session/event', { id: 's1' }, { type: 'turn/start' })
+    await new Promise((r) => setTimeout(r, 10))
+    emitTool(ctx, 's1', 'bash', { command: 'git checkout -b feat/x' })
+    emitTool(ctx, 's1', 'bash', { command: 'git checkout -b feat/y' })
+    await new Promise((r) => setTimeout(r, 10))
+    expect(seedContext).toHaveBeenCalledTimes(1)
+    dispose()
+  })
+
+  it('live user/message beats the seed (cache updated by the stream)', async () => {
+    const ctx = new Context()
+    const store = makeStore()
+    const seedContext = vi.fn(async () => '旧意图（不该被用）')
+    const dispose = createAutoCapture(ctx, { store, seedContext })
+
+    // A real user request arrives AFTER the observer starts → cache is warm.
+    ctx.emit('session/event', { id: 's1' }, {
+      type: 'user/message',
+      data: { content: [{ type: 'text', text: '新意图：修侧边栏' }], source: { kind: 'user' } },
+    })
+    emitTool(ctx, 's1', 'todo_write', { todos: [{ content: '排查 side panel' }] })
+    await new Promise((r) => setTimeout(r, 10))
+    expect(seedContext).not.toHaveBeenCalled() // cache already warm
+    const cap = store.captures[0]!
+    expect(cap.context).toContain('修侧边栏')
+    dispose()
+  })
 })
