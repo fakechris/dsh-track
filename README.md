@@ -1,4 +1,6 @@
 # dsh-track — Track Bridge
+[English](README.en.md) | 中文
+
 
 DeepSeek Harness 插件：嵌入式任务管理引擎。零外部依赖，数据面全部在 harness 内
 （session 事件 + storage KV）。参考设计见 [`docs/track-bridge-plugin-plan.md`](docs/track-bridge-plugin-plan.md)。

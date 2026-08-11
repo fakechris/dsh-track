@@ -1,6 +1,6 @@
 ---
 name: dsh-track
-description: Track Bridge 任务管理协议。当执行中遇到不可逆/风险/范围/验收类决策、用户提到与当前工作无关的想法、或需要把工作映射为结构化任务时使用。提供决策点上报、念头捕获、issue 创建与查询的调用纪律。
+description: Track Bridge 任务管理协议。当执行中遇到不可逆/风险/范围/验收类决策、用户提到与当前工作无关的想法、或需要把工作映射为结构化任务时使用。提供决策点上报、念头捕获、issue 创建与查询的调用纪律 English: Track Bridge task-management protocol — decision-point reporting, thought capture, and issue create/query discipline; use when the user faces an irreversible/risky/scope/acceptance decision, mentions an off-topic idea, or wants work mapped to structured tasks.
 license: BSD-3-Clause
 metadata:
   version: 0.1.0
