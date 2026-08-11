@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { runSync } from '../src/sync/run.ts'
+import { runSync, mapLimit } from '../src/sync/run.ts'
 import { projectToIssueCandidate } from '../src/sync/candidate.ts'
 import { candidateFromSpan } from '../src/sync/candidate.ts'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
@@ -107,5 +107,29 @@ describe('runSync v2 engine', () => {
     expect(p.title).toContain('研究官方分支能力')
     expect(p.labels).toContain('investigation')
     expect(p.suggestedState).toBe('todo')
+  })
+})
+
+describe('mapLimit (v2 Phase A concurrency pool)', () => {
+  it('runs all items and preserves input order', async () => {
+    const out = await mapLimit([1, 2, 3, 4, 5], 2, async (n) => n * 10)
+    expect(out).toEqual([10, 20, 30, 40, 50])
+  })
+
+  it('never exceeds the concurrency limit', async () => {
+    let active = 0
+    let peak = 0
+    await mapLimit([1, 2, 3, 4, 5, 6, 7, 8], 3, async () => {
+      active += 1
+      peak = Math.max(peak, active)
+      await new Promise((r) => setTimeout(r, 5))
+      active -= 1
+    })
+    expect(peak).toBeLessThanOrEqual(3)
+  })
+
+  it('handles limit larger than input and empty input', async () => {
+    expect(await mapLimit([1, 2], 10, async (n) => n + 1)).toEqual([2, 3])
+    expect(await mapLimit([], 3, async () => 1)).toEqual([])
   })
 })
