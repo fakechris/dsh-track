@@ -22,7 +22,6 @@ import { TrackStore, makeId } from './store.ts'
 import type { Capture, Decision, Issue } from './types.ts'
 import { runSync } from './sync/run.ts'
 import type { SyncOptions, SyncReport, SyncDeps as SyncReportDeps } from './sync/run.ts'
-import { installResumeAutoContinue, type ResumeAutoContinueConfig } from './resume-auto-continue.ts'
 
 export const name = '@deepseek-ai/dsh-track'
 export const inject = ['tools', 'storage']
@@ -31,8 +30,6 @@ export const inject = ['tools', 'storage']
 export interface Config {
   /** Workspace / team key used for Linear-style identifiers (default INV). */
   teamKey?: string
-  /** Resume auto-continue: automatically continue interrupted sessions after a restart. */
-  resumeAutoContinue?: ResumeAutoContinueConfig
 }
 
 /** Default team key when config omits it. */
@@ -77,8 +74,6 @@ export function apply(ctx: Context, config?: Config) {
   const teamKey = config?.teamKey ?? DEFAULT_TEAM_KEY
   // Resume auto-continue: after a restart, an interrupted agent turn continues
   // automatically (host-side agent/created listener — no browser timing races).
-  const disposers: Array<() => void> = []
-  disposers.push(installResumeAutoContinue(ctx, config?.resumeAutoContinue))
   // HTTP handlers may fire before the store effect opens the unit; keep a
   // lazily-resolved open so the API works regardless of boot ordering.
   let openPromise: Promise<void> | null = null
@@ -99,10 +94,7 @@ export function apply(ctx: Context, config?: Config) {
       console.error('[dsh-track] store open failed:', e)
       throw e
     }
-    return () => {
-      store.close()
-      for (const dispose of disposers) dispose()
-    }
+    return () => store.close()
   })
 
   // ---- capture_thought: drop a thought into the capture wall ----
