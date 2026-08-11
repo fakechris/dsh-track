@@ -324,9 +324,9 @@ function render(snapshot: Snapshot): void {
     const pager = q('.inv-issue-pager')
     if (pager !== null) {
       pager.innerHTML = totalPages > 1
-        ? `<button class="inv-page" data-issue-page="${issuePage - 1}" ${issuePage === 0 ? 'disabled' : ''}>‹</button>` +
+        ? `<button class="inv-page inv-issue-page" data-issue-page="${issuePage - 1}" ${issuePage === 0 ? 'disabled' : ''}>‹</button>` +
           `<span class="inv-page-info">${issuePage + 1}/${totalPages}</span>` +
-          `<button class="inv-page" data-issue-page="${issuePage + 1}" ${issuePage >= totalPages - 1 ? 'disabled' : ''}>›</button>`
+          `<button class="inv-page inv-issue-page" data-issue-page="${issuePage + 1}" ${issuePage >= totalPages - 1 ? 'disabled' : ''}>›</button>`
         : ''
     }
   }
@@ -594,21 +594,23 @@ export function mountRightPanel(): () => void {
   const onAction = (e: Event): void => {
     if (panel === null) return
     const target = e.target as HTMLElement
-    const pageBtn = target.closest<HTMLElement>('.inv-page')
-    if (pageBtn !== null && !(pageBtn as HTMLButtonElement).disabled) {
-      const page = Number(pageBtn.dataset.page)
-      if (Number.isInteger(page) && page >= 0) {
-        capturePage = page
-        refresh()
-      }
-      return
-    }
-    const issuePageBtn = target.closest<HTMLElement>('[data-issue-page]')
+    // Issue pager buttons first — they also carry .inv-page for shared styling,
+    // so they must be checked before the capture pager branch.
+    const issuePageBtn = target.closest<HTMLElement>('.inv-issue-page')
     if (issuePageBtn !== null && !(issuePageBtn as HTMLButtonElement).disabled) {
       const page = Number(issuePageBtn.dataset.issuePage)
       if (Number.isInteger(page) && page >= 0) {
         issuePage = page
         expandedIssueId = null
+        refresh()
+      }
+      return
+    }
+    const pageBtn = target.closest<HTMLElement>('.inv-page')
+    if (pageBtn !== null && !(pageBtn as HTMLButtonElement).disabled) {
+      const page = Number(pageBtn.dataset.page)
+      if (Number.isInteger(page) && page >= 0) {
+        capturePage = page
         refresh()
       }
       return
