@@ -7,9 +7,15 @@ English | [中文](README.md)
 > tasks have a lifecycle. Everything lives inside the harness (session events + storage KV), zero
 > external dependencies.
 
-**Status** Active · **Tests** 188 passing · **Build** `pnpm run build` · **Version** 0.1.0
+**Status** Active · **Tests** 188 passing · **Build** `pnpm run build` · **Version** 0.2.0
 
 ---
+
+## 🖥️ Screenshots
+
+| Panel overview (capture wall + issue wall on the right) | Jump back to the source prompt (highlighted) |
+|---|---|
+| ![dsh-track panel overview](assets/panel.png) | ![jump back to the source prompt](assets/jump-back.png) |
 
 ## ✨ Features
 
