@@ -10,3 +10,5 @@ tsconfig.ab-*.json
 tsconfig.worktree.json
 # nested git worktrees (inside the workspace sandbox root)
 .worktrees/
+# gstack repo-local session state
+.gstack/

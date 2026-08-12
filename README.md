@@ -5,9 +5,15 @@
 > **DeepSeek Harness 的嵌入式任务管理引擎** —— 把「念头、决策、任务」变成结构化、可追溯、可折叠的数据。
 > 捕获零摩擦，决策留痕迹，任务有生命周期。数据全部在 harness 内部（session 事件 + storage KV），零外部依赖。
 
-**状态** Active · **测试** 188 passing · **构建** `pnpm run build` · **版本** 0.1.0
+**状态** Active · **测试** 188 passing · **构建** `pnpm run build` · **版本** 0.2.0
 
 ---
+
+## 🖥️ 界面预览
+
+| 面板总览（右侧捕获墙 + 任务墙） | 跳回来源对话（高亮定位到原始 prompt） |
+|---|---|
+| ![dsh-track 面板总览](assets/panel.png) | ![跳回来源对话](assets/jump-back.png) |
 
 ## ✨ 特性
 
