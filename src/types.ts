@@ -67,6 +67,59 @@ export interface Issue {
   /** ISO 8601 timestamps. */
   createdAt: string
   updatedAt: string
+  /**
+   * Session currently declared to be driving this issue (track_attach_issue).
+   * The evidence observer records signals from this session against the issue.
+   */
+  attachSessionId?: string
+  /** Heartbeat: epoch ms of the last real progress (evidence, not liveness). */
+  lastProgressAt?: number
+  /**
+   * Machine-proposed lifecycle state. NOT authoritative — `state` only
+   * changes on explicit confirmation (user confirm / confirmed_by_user).
+   * `inferred` is what the evidence says; `state` is what we've committed to.
+   */
+  inferred?: IssueInferred
+}
+
+/** One piece of lifecycle evidence (the state machine's input). */
+export interface EvidenceRef {
+  /** Which signal fired. */
+  signal: LifecycleSignal
+  /** Epoch ms when the signal fired. */
+  at: number
+  /** Weight of this signal (positive supports progress, negative penalizes). */
+  weight: number
+  /** Source session, when the signal came from an observed session. */
+  sessionId?: string
+  /** Short human-readable pointer to the signal (e.g. todo count, turn reason). */
+  pointer?: string
+}
+
+/** Lifecycle evidence signals the observer can collect. */
+export type LifecycleSignal =
+  | 'user-confirm'   // explicit user confirmation ("可以了/完成/验收通过") — the only path to `done`
+  | 'todo-all-done'  // todo_write snapshot: completed === total > 0
+  | 'turn-completed' // turn/end reason.kind === 'completed'
+  | 'turn-error'     // turn/end reason.kind === 'error' | 'max-tokens'
+  | 'turn-blocked'   // turn/end reason.kind === 'blocked'
+  | 'tool-error'     // tool/result carried an error-ish payload
+  | 'activity'       // file write/edit or shell activity (heartbeat, weak)
+  | 'model-propose'  // model explicitly proposed a state via track_update_issue_state
+  | 'timeout'        // wall-clock: no lastProgressAt for the abandonment window
+
+/** Machine-proposed lifecycle state (attached to an Issue as `inferred`). */
+export interface IssueInferred {
+  /** Proposed Linear-compatible state. */
+  state: IssueState
+  /** Composite confidence in [0,1]. */
+  confidence: number
+  /** Recent evidence this proposal is based on (newest last, capped). */
+  evidence: EvidenceRef[]
+  /** Epoch ms of the proposal. */
+  at: number
+  /** Who/what produced the proposal. */
+  by: 'auto' | 'model' | 'user'
 }
 
 /** Epic (Linear Project-shaped simplification). */
@@ -151,8 +204,8 @@ export interface TrackGlobal {
  */
 export interface AuditEntry {
   id: string
-  /** The tool that ran: capture_thought | report_decision_point | track_create_issue | track_sync_history | track_usage | track_backfill_captures | track_respond_decision | track_list_decisions. */
-  tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history' | 'track_usage' | 'track_backfill_captures' | 'track_respond_decision' | 'track_list_decisions'
+  /** The tool that ran: capture_thought | report_decision_point | track_create_issue | track_sync_history | track_usage | track_backfill_captures | track_respond_decision | track_list_decisions | track_attach_issue | track_update_issue_state | track_issue_evidence. */
+  tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history' | 'track_usage' | 'track_backfill_captures' | 'track_respond_decision' | 'track_list_decisions' | 'track_attach_issue' | 'track_update_issue_state' | 'track_issue_evidence'
   /** Epoch ms of the invocation. */
   ts: number
   /** Owning agent session id when available. */

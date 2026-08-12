@@ -64,6 +64,17 @@ metadata:
 - 任务状态以 Track 为权威（契约字段：验收标准/优先级/依赖）；session 内 todo 是执行细节
 - 衍生需求（前置依赖、跨项目 bug、"顺便做 X"）先识别、建议归属，经用户确认再创建，不自动落 issue
 
+# 任务推进（track_attach_issue / track_update_issue_state / track_issue_evidence，2026-08-12 起）
+
+- **开始做某个 issue 时**（计划阶段/写第一条 todo 时）：调用 `track_attach_issue(issue_id)` 声明推进——
+  此后本会话的执行证据（todo 完成、轮次结果、工具错误）自动记到该 issue，状态机自动推断进度。
+- **查看进度/证据**：`track_issue_evidence(issue_id)` 看推断状态、置信度、证据账本。
+- **推进状态**：`track_update_issue_state(issue_id, target, note?)` 提建议即可；
+  但 **done / canceled 必须用户明确确认**——先问用户（"看起来做完了，要标完成吗？"），
+  用户同意后带 `confirmed_by_user=true` 再调用。**系统永远不会自动标 done。**
+- 发现 done/canceled 提案待确认（track_issue_evidence 里出现 "Pending confirmation"）时：
+  主动问用户，不要擅自落盘。
+
 # 历史同步（track_sync_history）
 
 - **用户问"最近的工作/同步到 Track/整理历史"时**：调用 `track_sync_history`，把工作区 session 历史折叠成 issue/epic 候选
