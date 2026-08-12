@@ -7,7 +7,11 @@ English | [中文](README.md)
 > tasks have a lifecycle. Everything lives inside the harness (session events + storage KV), zero
 > external dependencies.
 
-**Status** Active · **Tests** 188 passing · **Build** `pnpm run build` · **Version** 0.2.0
+**Status** Active · **Tests** 342 passing · **Build** `pnpm run build` · **Version** 0.2.1
+> **v0.2.1 · final-release compatibility (2026-08-12)**: the official final release
+> (snapshots/20260812T172954Z-final-unwatermarked) renamed two surfaces without aliases —
+> `SessionQueryService`→`SessionQueryEngine` (dsh-session-query) and `ctx.httpServer`→`ctx.webServer`
+> (dsh-host-webserver) — both adapted (tsc + 342 tests + production-equivalent smoke verified).
 
 ---
 
