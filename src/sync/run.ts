@@ -10,7 +10,7 @@
  * @module @deepseek-ai/dsh-track/sync/run
  */
 
-import type { SessionQueryService } from '@deepseek-ai/dsh-session-query'
+import type { SessionQueryEngine } from '@deepseek-ai/dsh-session-query'
 import type { Context } from '@deepseek-ai/cordis'
 import type { TrackStore } from '../store.ts'
 import type { Capture, Issue } from '../types.ts'
@@ -65,7 +65,7 @@ export interface SyncReport {
 
 /** Minimal service surface runSync needs — easy to stub in tests. */
 export interface SyncDeps {
-  sessionQuery: Pick<SessionQueryService, 'filterSessions' | 'readSession' | 'readTitle'>
+  sessionQuery: Pick<SessionQueryEngine, 'filterSessions' | 'readSession' | 'readTitle'>
   store: TrackStore
   /** Optional refiner hook (LLM enhancement, P4); default identity. */
   refine?: (candidates: IssueCandidate[], epics: EpicCandidate[]) => Promise<{ issues: IssueCandidate[]; epics: EpicCandidate[] }>
