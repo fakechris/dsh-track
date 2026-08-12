@@ -1,143 +1,122 @@
-# dsh-track — Track Bridge
+# dsh-track · Track Bridge
+
 [English](README.en.md) | 中文
 
+> **DeepSeek Harness 的嵌入式任务管理引擎** —— 把「念头、决策、任务」变成结构化、可追溯、可折叠的数据。
+> 捕获零摩擦，决策留痕迹，任务有生命周期。数据全部在 harness 内部（session 事件 + storage KV），零外部依赖。
 
-DeepSeek Harness 插件：嵌入式任务管理引擎。零外部依赖，数据面全部在 harness 内
-（session 事件 + storage KV）。参考设计见 [`docs/track-bridge-plugin-plan.md`](docs/track-bridge-plugin-plan.md)。
+**状态** Active · **测试** 188 passing · **构建** `pnpm run build` · **版本** 0.1.0
 
-## 定位
+---
 
-- **Fat skill + thin harness**：决策点判据/协议在 [`skills/dsh-track/SKILL.md`](skills/dsh-track/SKILL.md)；
-  harness 只注册 `report_decision_point` / `capture_thought` / `track_*` 工具，不做判断。
-- **方案 C 存储归位**：决策点/todo 留 session 事件（可回放）；Capture/Issue/Epic/关联存
-  `ctx.storage` KV（跨 session 独立）；KV 数据为 **Linear 兼容形状**（随时可迁）。
-- **Web UI 侧边栏**（规划中）：汇集墙 + 决策点待确认角标。
+## ✨ 特性
 
-## 安装
+- 🧠 **捕获墙（Capture Wall）** —— `capture_thought` 零摩擦收录念头；规划时的 `todo_write` 也会被自动捕获，且每条都携带**动机上下文**（当时那条用户请求），永远不会变成"无来由的琐碎清单"。
+- ⚖️ **决策账本（Decision Ledger）** —— 遇到不可逆 / 风险 / 范围 / 验收类决策，先上报决策点，用户轻决策回答，**选择与理由**落盘可查（回答率进 funnel）。
+- 📋 **任务生命周期（Evidence-driven Lifecycle）** —— Linear 兼容的任务模型；证据驱动的状态机，`done` / `canceled` **永不自动达成**，必须用户确认。
+- 🔄 **历史同步（History Sync）** —— 一键把工作区过往会话折叠成 epic/issue 候选，默认 dry-run，确认后才落库。
+- 💰 **LLM 用量账本（Usage Ledger）** —— track 引擎自己调用的 LLM 费用（token / 成本）单独计量，"track 花了多少 token" 一句话可查。
+- 🖥️ **Web 面板** —— 右侧栏汇集墙 + 任务墙；每条记录都可 **「↩ 对话」跳回来源会话的那条原始 prompt**，高亮定位。
+
+## 🚀 快速开始
 
 ```sh
-# 从 GitHub 安装（需 dsh 内测环境）
+# 1. 安装插件（dsh 环境）
 dsh plugin --profile web add github:dsh-external/dsh-track
 
-# skill 装入默认扫描目录
+# 2. 安装协议 skill（决策点 / 任务推进的调用纪律，装到默认扫描目录）
 mkdir -p ~/.dsh/skills && cp -r skills/dsh-track ~/.dsh/skills/
 
-# 重启 dsh web，工具自动挂载
+# 3. 重启 dsh web（守护会自动拉起），工具自动挂载
 dsh web
 ```
 
-## 工具
+**验证**：浏览器打开面板（右下角 ◆ 按钮，或会话标签栏的 *Track* 标签页），看到「捕获想法」和「任务」两栏即安装成功。
+
+## 📖 核心工作流
+
+| 流程 | 做什么 | 入口 |
+|---|---|---|
+| **捕获** | 随时把念头丢进捕获墙；agent 规划时（todo_write）自动捕获，自动附带动机上下文 | `capture_thought` · 面板输入框 |
+| **决策** | 遇到不可逆 / 风险 / 价值观 / 范围 / 验收决策时上报，用户轻决策回答，选择与理由落盘 | `report_decision_point` → `track_respond_decision` |
+| **任务** | 把需求变成任务；声明会话在推进它，执行证据自动累计；状态机推进，`done` 必须用户确认 | `track_create_issue` → `track_attach_issue` → `track_update_issue_state` |
+| **回顾** | 把过往会话折叠成任务候选；随时跳回任何条目的来源对话与原始 prompt | `track_sync_history` · 面板「↩ 对话」 |
+
+## 🧰 工具清单
 
 | 工具 | 作用 |
 |---|---|
-| `capture_thought(content, tags?)` | 把念头零摩擦收进汇集墙 |
-| `report_decision_point(question, options, my_preference, rationale, impact, need)` | AI 遇到不可逆/风险/范围/验收决策时上报，用户轻决策回答；自动存入决策账本 |
+| `capture_thought(content, tags?)` | 把念头零摩擦收进捕获墙 |
+| `report_decision_point(question, options, my_preference, rationale, impact, need)` | 上报决策点；用户轻决策回答，自动存入决策账本 |
 | `track_respond_decision(decision_id, choice, rationale?)` | 用户回答后落盘选择与理由（幂等；`dismissed` 表示跳过） |
-| `track_list_decisions(state?, since?, session_id?)` | 查决策历史（含待确认/已回答/已跳过） |
-| `track_attach_issue(issue_id)` | 声明当前会话正在推进某 issue；此后执行证据自动记到该 issue |
-| `track_update_issue_state(issue_id, target, note?, confirmed_by_user?)` | 提议/确认状态变更；done/canceled 必须带 `confirmed_by_user=true`（系统永不自动标 done） |
-| `track_issue_evidence(issue_id)` | 查某 issue 的证据账本与推断状态 |
-| `track_create_issue(title, description?, priority?, acceptance?, parent_id?)` | 创建 Linear 兼容 issue |
-| `track_list_issues(team_id?, state?)` | 列出 issue |
+| `track_list_decisions(state?, since?, session_id?)` | 查决策历史（待确认 / 已回答 / 已跳过） |
+| `track_create_issue(title, description?, priority?, acceptance?, parent_id?)` | 创建 Linear 兼容任务 |
+| `track_attach_issue(issue_id)` | 声明当前会话正在推进某任务；此后执行证据自动记到该任务 |
+| `track_update_issue_state(issue_id, target, note?, confirmed_by_user?)` | 提议 / 确认状态变更；`done` / `canceled` 必须带 `confirmed_by_user=true`（系统永不自动标 done） |
+| `track_issue_evidence(issue_id)` | 查任务的证据账本与推断状态 |
+| `track_list_issues(team_id?, state?)` | 列出任务 |
 | `track_sync_history(workspace?, since?, dry_run?, max_sessions?, engine?)` | 把工作区 session 历史折叠成 epic/issue 候选（默认 dry-run） |
-| `track_usage(since?)` | 报告 track 引擎发起的 LLM 调用开销：请求数、input/output/cache/reasoning token、耗时、估算成本（按模型分路由） |
-| `track_backfill_captures()` | 存量捕获 context 回填：把动机链功能（PR #20）之前产生的无 context open capture，从源 session 日志补最近用户显式请求；幂等 |
+| `track_usage(since?)` | 报告 track 引擎发起的 LLM 调用开销：请求数、各类 token、耗时、估算成本 |
+| `track_backfill_captures()` | 存量捕获动机上下文回填（幂等，安全可重跑） |
 
-## 决策账本（decision ledger）
+## 🖥️ Web 面板与 HTTP API
 
-决策点是 track 里价值最高的数据之一——用户在某次取舍上的**选择与理由**。
-`report_decision_point` 上报时预分配 id 并写入 KV `decisions` 表，返回文本首行
-`Decision recorded: dec_xxx` 作为会话里的稳定指针（不写 session 自定义事件，
-遵守 20260811 起的会话日志边界约定）；用户回答后由模型调用
-`track_respond_decision` 落盘（`choice='dismissed'` 表示跳过）。查询面：
-`track_list_decisions` 工具、`GET /api/track/decisions`、面板（规划中）、
-funnel 的 `decisions.answerRate`。保留期独立于会话日志（KV 本就不随会话删除）。
+面板（`src/client/right-panel.ts`）直接挂载在会话右侧栏，纯 DOM 注入、无框架依赖：
 
-## 任务生命周期（evidence-driven lifecycle）
+- **捕获墙**：输入捕获、分页、两步确认删除、一键转任务；
+- **任务墙**：按状态分组（进行中优先）、可展开详情、删除；
+- **↩ 对话**：每条捕获/任务都可一键跳回来源会话的那条原始用户 prompt——自动切换左侧会话、翻页到深历史、滚动定位并高亮闪烁；旧数据无消息 id 时回退到该会话首条用户消息；
+- 20s 轻量自动刷新、面板宽度可拖拽、收起后有 ◆ 悬浮按钮。
 
-本地运行时没有结构化 CI/deploy 信号（git/构建都走 bash），所以 `done` 不能靠
-"看起来做完了"自动达成。设计（2026-08-12，对应外部研究 Q3）：
+HTTP API（面板的数据面，`/api/track/*`）：
 
-- **双字段**：`state`（已确认的真相，Linear 4 值）vs `inferred`（机器提案：状态+置信度+证据账本）。
-- **证据观察器**（`lifecycle/observe.ts`）把结构化事件流（todo 全量快照、turn/end reason、
-  tool 错误、文件活动、用户确认短语）转成 EvidenceRef，只对**当前 attach 的 issue** 记录。
-- **状态机**（`lifecycle/state-machine.ts`，纯函数）：唯一自动落盘的是可逆的
-  todo → in_progress；**done / canceled 永远需要用户确认**（面板/`confirmed_by_user=true`），
-  14 天无进展会提议取消。模型侧入口：`track_attach_issue` / `track_update_issue_state` /
-  `track_issue_evidence`（SKILL.md「任务推进」纪律）。
+| 端点 | 说明 |
+|---|---|
+| `GET/POST /api/track/captures` · `DELETE /:id` · `POST /:id/promote` | 捕获墙 CRUD + 转任务 |
+| `GET /api/track/issues` · `DELETE /:id` · `GET /:id/evidence` | 任务列表 / 删除 / 证据账本 |
+| `GET /api/track/decisions?state=&since=&session_id=` | 决策历史 |
+| `GET /api/track/usage?since=&limit=` | LLM 用量汇总 + 最近明细 |
+| `GET /api/track/funnel` | 工具调用漏斗（capture 转化率等） |
+| `POST /api/track/sync` | 历史同步（等价 `track_sync_history`） |
 
-## 捕获动机链（capture motivation context）
+## 🏗️ 架构
 
-自动捕获（`capture/observe.ts`）从结构化工具流抓取执行信号（todo_write 首条、
-git 分支创建）。为避免捕获墙变成「无上下文的琐碎动作清单」（如「调研 StreamChunk
-usage/token 字段」而不知是「为了实现成本计量」），每条捕获携带 **context = 该会话
-最近一条用户显式请求**（`source.kind === 'user'`）：
+**Fat skill + thin harness**：决策判据与调用纪律在 [`skills/dsh-track/SKILL.md`](skills/dsh-track/SKILL.md)，harness 侧只注册工具与存储，不做判断。
 
-- 实时：observer 维护 per-session 缓存，捕获时写入（A）
-- 续接会话（重启后 splice）：`seedContext` 从持久化日志回填最近用户请求（#21）
-- 存量：`track_backfill_captures` 一次性回填 PR #20 之前的旧捕获（#22）
+**存储归位**：决策点/todo 留 session 事件（可回放）；Capture / Issue / Decision / Usage 存 `ctx.storage` KV（跨会话独立），数据为 **Linear 兼容形状**（随时可迁）。
 
-context 在 v2 管线三处消费：synthesize 时喂给 LLM（标题从执行层升到需求层，
-如「调研 StreamChunk…为 LLM 用量记录模块做准备」）；align 时 `captureOverlaps`
-匹配 content OR context（执行层捕获映射到需求候选）；同 context 的多个捕获
-整组 promote（一个需求的碎片一次 fold，不留孤儿）。
+```
+src/index.ts          host 插件：工具注册 + 事件订阅 + store 接线 + HTTP API
+src/store.ts          TrackStore：KV 单元封装（串行写链）
+src/types.ts          Linear 兼容数据形状
+src/capture/         自动捕获 + 动机上下文（observer / context / backfill）
+src/lifecycle/       证据观察器 + 状态机（evidence-driven lifecycle）
+src/sync/            历史同步引擎（extract → segment → intent → synthesize → align）
+src/usage.ts          LLM 用量账本（recorder + 汇总 + 成本估算）
+src/client/           Web 面板（right-panel / composer strip）
+skills/dsh-track      fat skill：决策点判据 / 格式 / 纪律
+cordis.patch.yml      bundle patch（dsh plugin add 自动应用）
+```
 
-## LLM 用量账本（usage ledger）
+**设计约束（插件开发者必读）**：业务数据**不写** session 自定义事件——2026-08-11 起 harness 对未知事件类型会拒读整份日志；观察会话只走官方事件流，只读不写（详见 `src/types.ts` 末尾注释与仓库 AGENTS.md）。
 
-track 的 v2 同步引擎（`engine: 'v2'`）会直接调用 harness 的 `ctx.llm` 做语义判断
-（意图分层 / 候选合成 / 关系分类）。这类插件直连调用不产生 session 事件，harness 全局
-token-meter 看不到，因此 **track 在 `src/sync/llm.ts` 的唯一汇聚点自行计量**：
-
-- 每次流式调用记录一条 `LlmUsageRecord`（`usage` KV 表）：时间、调用点 label、
-  provider/model、`inputTokens` / `outputTokens` / `cacheReadTokens` / `cacheWriteTokens` /
-  `reasoningTokens`、结束原因（stop/max-tokens/error/aborted）、耗时；`llmJson` 的每次
-  重试 attempt 各记一条（一次重试 = 一次真实请求）。
-- 查询入口：`track_usage` 工具（模型可直接问"track 花了多少 token/钱"）与
-  `GET /api/track/usage?since=<epoch-ms>&limit=<n>`（汇总 + 最近明细）。
-- 成本估算按 `src/usage.ts` 的 `PRICING` 表（每百万 token 美元）：内置
-  `deepseek-official` 官方价（2026-08-01 验证：`deepseek-v4-flash` 输入 $0.14/1M、
-  cache hit $0.0028/1M、输出 $0.28/1M；`deepseek-v4-pro` 输入 $0.435/1M、cache hit
-  $0.003625/1M、输出 $0.87/1M）。不在表内的路由仍计数 token，成本标记为 unpriced。
-- 计量是 fire-and-forget 观测面：写入失败只记日志，绝不影响 sync 主流程；无 llm
-  service / 无 recorder 时零成本降级。
-
-## 开发
+## 🛠️ 开发
 
 ```sh
 pnpm install
-pnpm run build      # tsc 产物 lib/
-pnpm test           # vitest
+pnpm run build      # tsc 产物 lib/ + client bundle
+pnpm test           # vitest（188 tests）
 ```
 
-## 与 Session 日志的边界（插件事件约定）
+- 开发用仓库内 worktree（`.worktrees/<name>`）+ 分支 + PR + squash merge（见仓库 `AGENTS.md` L4/L5）。
+- 新增 `@deepseek-ai/*` 依赖须同步改 tsconfig paths、vitest alias、ab-config relink（L7）。
 
-> 背景（2026-08-11 事故）：dsh-track 早期版本往会话日志写自定义事件（`track/decision`、
-> `track/sync-preview`）。0811 快照起，harness 的会话事件白名单（`KNOWN_SESSION_EVENT_TYPES`）
-> 是编译期从仓库内 `SessionEventMap` 生成的，**外部插件事件结构上就不在其中**；读取器对
-> 未知类型且无 `ignorable` 标记的事件**拒读整份日志**（宁可拒读不误读，防"新 harness 写入"
-> 被静默错读）。这导致 6 个旧会话在新 harness 上打不开（已用 `repair-unknown-events.mjs`
-> 加 `ignorable: true` 修复，内容零丢失）。
+## 📚 相关链接
 
-**规则（必须遵守）：**
+- 仓库：[github.com/dsh-external/dsh-track](https://github.com/dsh-external/dsh-track)
+- 协议 skill：[`skills/dsh-track/SKILL.md`](skills/dsh-track/SKILL.md)（决策点判据、任务推进纪律）
+- 仓库约定：[`AGENTS.md`](AGENTS.md)（提交 / worktree / 文档双语规范）
 
-1. **业务数据不进 session 日志**——任务/issue/决策/用量等持久化数据写自己的 storage
-   （本插件即 TrackStore KV），不要 append 自定义 session 事件。
-2. **观察会话走官方事件**——监听 `session/event` 等官方结构化事件流，只读不写。
-3. **不写 session 自定义事件**——官方注册面（"registration surface"）已明确 deferred，
-   等真实消费方出现才可能开放；在那之前写入即"未知类型"，会制造旧会话读不了的问题。
-4. 若确需旁路数据（审计/预览/缓存，丢了无妨），**必须带 `ignorable: true`**——该标记的
-   语义就是"此事件可跳过、不影响会话重建"，**不可用于承载关键数据**。
-5. 存量旧日志含未知事件 → `dsh-session-recovery` skill 的
-   `repair-unknown-events.mjs --id <session-id>`（或 `--all`）加 ignorable 标记修复。
+## 📄 License
 
-## 目录
-
-```
-src/index.ts        host 插件：工具注册 + 事件订阅 + store 接线
-src/store.ts        TrackStore：KV 单元封装（串行写链）
-src/types.ts        Linear 兼容数据形状
-src/usage.ts        LLM 用量账本：recorder 工厂 + 汇总 + 成本估算 + 渲染
-src/sync/llm.ts     LLM 门面：统一流式 JSON 调用 + 用量计量埋点
-skills/dsh-track fat skill：决策点判据/格式/纪律
-cordis.patch.yml    bundle patch（dsh plugin add 自动应用）
-```
+私有插件仓库（`package.json` 标记 `private`）；skill 元数据声明 **BSD-3-Clause**。
