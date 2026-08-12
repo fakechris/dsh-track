@@ -81,6 +81,27 @@ pnpm run build      # tsc 产物 lib/
 pnpm test           # vitest
 ```
 
+## 与 Session 日志的边界（插件事件约定）
+
+> 背景（2026-08-11 事故）：dsh-track 早期版本往会话日志写自定义事件（`track/decision`、
+> `track/sync-preview`）。0811 快照起，harness 的会话事件白名单（`KNOWN_SESSION_EVENT_TYPES`）
+> 是编译期从仓库内 `SessionEventMap` 生成的，**外部插件事件结构上就不在其中**；读取器对
+> 未知类型且无 `ignorable` 标记的事件**拒读整份日志**（宁可拒读不误读，防"新 harness 写入"
+> 被静默错读）。这导致 6 个旧会话在新 harness 上打不开（已用 `repair-unknown-events.mjs`
+> 加 `ignorable: true` 修复，内容零丢失）。
+
+**规则（必须遵守）：**
+
+1. **业务数据不进 session 日志**——任务/issue/决策/用量等持久化数据写自己的 storage
+   （本插件即 TrackStore KV），不要 append 自定义 session 事件。
+2. **观察会话走官方事件**——监听 `session/event` 等官方结构化事件流，只读不写。
+3. **不写 session 自定义事件**——官方注册面（"registration surface"）已明确 deferred，
+   等真实消费方出现才可能开放；在那之前写入即"未知类型"，会制造旧会话读不了的问题。
+4. 若确需旁路数据（审计/预览/缓存，丢了无妨），**必须带 `ignorable: true`**——该标记的
+   语义就是"此事件可跳过、不影响会话重建"，**不可用于承载关键数据**。
+5. 存量旧日志含未知事件 → `dsh-session-recovery` skill 的
+   `repair-unknown-events.mjs --id <session-id>`（或 `--all`）加 ignorable 标记修复。
+
 ## 目录
 
 ```
