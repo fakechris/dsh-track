@@ -34,12 +34,26 @@ dsh web
 | Tool | Purpose |
 |---|---|
 | `capture_thought(content, tags?)` | capture a thought into the wall with zero friction |
-| `report_decision_point(question, options, my_preference, rationale, impact, need)` | raise a decision point when the AI hits irreversible/risky/scope/acceptance decisions; the user answers with a lightweight choice |
+| `report_decision_point(question, options, my_preference, rationale, impact, need)` | raise a decision point when the AI hits irreversible/risky/scope/acceptance decisions; the user answers with a lightweight choice; auto-persisted to the decision ledger |
+| `track_respond_decision(decision_id, choice, rationale?)` | record the user's answer (choice + rationale) after they respond; idempotent; `dismissed` to skip |
+| `track_list_decisions(state?, since?, session_id?)` | read decision history (pending / answered / dismissed) |
 | `track_create_issue(title, description?, priority?, acceptance?, parent_id?)` | create a Linear-compatible issue |
 | `track_list_issues(team_id?, state?)` | list issues |
 | `track_sync_history(workspace?, since?, dry_run?, max_sessions?, engine?)` | fold workspace session history into epic/issue candidates (dry-run by default) |
 | `track_usage(since?)` | report LLM cost incurred by the track engine: request counts, input/output/cache/reasoning tokens, wall time, estimated cost per provider/model route |
 | `track_backfill_captures()` | backfill motivation context on legacy open captures: fills the context of pre-#20 captures from their source session logs (most recent explicit user request); idempotent |
+
+## Decision ledger
+
+Decisions are among the most valuable data track holds — the user's **choice and
+rationale** on each tradeoff. `report_decision_point` pre-allocates an id and
+writes to the KV `decisions` table; the first line of the returned text
+(`Decision recorded: dec_xxx`) is the stable pointer in the transcript (no
+custom session events — honoring the post-20260811 session-log boundary). After
+the user answers, the model records it via `track_respond_decision`
+(`choice='dismissed'` to skip). Query surfaces: the `track_list_decisions` tool,
+`GET /api/track/decisions`, the panel (planned), and `decisions.answerRate` in
+the funnel. Retention is independent of session logs (KV outlives conversations).
 
 ## Capture motivation context
 

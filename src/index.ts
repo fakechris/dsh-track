@@ -91,7 +91,7 @@ export function apply(ctx: Context, config?: Config) {
   // Observability: one audit row per model-facing tool call so funnel
   // questions are answered by the store, not by session-log archaeology.
   // Fire-and-forget: audit must never break the tool's real work.
-  const audit = (tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history' | 'track_usage' | 'track_backfill_captures', exec: { agent?: { id?: string } }, ok: boolean, detail?: string): void => {
+  const audit = (tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history' | 'track_usage' | 'track_backfill_captures' | 'track_respond_decision' | 'track_list_decisions', exec: { agent?: { id?: string } }, ok: boolean, detail?: string): void => {
     void ensureStoreOpen()
       .then(() => store.appendAudit({
         id: makeId('audit'),
@@ -178,6 +178,7 @@ export function apply(ctx: Context, config?: Config) {
       if (!exec.agent) {
         throw new Error('report_decision_point requires an owning agent session')
       }
+      await ensureStoreOpen()
       const decision: Decision = {
         id: makeId('decision'),
         sessionId: exec.agent.id,
@@ -190,23 +191,99 @@ export function apply(ctx: Context, config?: Config) {
         status: 'pending',
         createdAt: new Date().toISOString(),
       }
-      // The decision's value is the conversation itself (the user answers
-      // inline). Deliberately NOT persisted to the track store AND no longer
-      // appended to the session log: the 20260811 harness refuses to resume a
-      // session containing an unknown (out-of-repo) event type, and the
-      // session-log trace was never consumed by anything (decision-point
-      // removal, 2026-08-11).
+      // Persist to the KV decisions table (the 20260811 harness refuses to
+      // resume a session containing an unknown custom event type, so the
+      // decision record lives in storage — the returned text below is the
+      // stable pointer that anchors it in the conversation transcript).
+      // The id is pre-allocated, so a retried call is an idempotent overwrite.
+      await store.upsertDecision(decision)
       audit('report_decision_point', exec, true, decision.id)
-      return (
-        `Decision point raised: ${decision.id}\n`
-        + `Question: ${decision.question}\n`
-        + `Options: ${decision.options.join(' | ')}\n`
-        + `My preference: ${decision.aiPreference} — ${decision.aiRationale}\n`
-        + (decision.impact ? `Impact: ${decision.impact}\n` : '')
-        + `Waiting on: ${decision.need}`
-      )
+      return formatDecisionRaised(decision)
     },
     presentCall: (args) => ({ card: 'generic', title: 'Decision point', kind: 'other', rawInput: args.question }),
+  }))
+
+  // ---- track_respond_decision: record the user's answer to a raised decision ----
+  // The user answers inline in the conversation; the model relays that answer
+  // here so the choice + rationale become first-class, queryable data instead
+  // of chat text. Idempotent: re-answering overwrites (last answer wins).
+  ctx.tools.register(defineTool({
+    name: 'track_respond_decision',
+    description:
+      'Record the user\'s answer to a raised decision point. Call this AFTER the user '
+      + 'answers a decision you raised via report_decision_point — it persists their '
+      + 'choice and rationale so decisions become queryable history instead of chat text. '
+      + 'Use choice=\'dismissed\' when the user declines to decide / the question is moot.',
+    parameters: {
+      decision_id: { type: 'string', required: true, description: 'The decision id returned by report_decision_point (dec_…).' },
+      choice: { type: 'string', required: true, description: "The user's answer as stated, or 'dismissed'." },
+      rationale: { type: 'string', description: "Optional user rationale / note from the conversation." },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    async execute(args, exec) {
+      await ensureStoreOpen()
+      const decision = await store.getDecision(args.decision_id)
+      if (!decision) {
+        throw new Error(`decision not found: ${args.decision_id}`)
+      }
+      const dismissed = args.choice === 'dismissed'
+      const updated: Decision = {
+        ...decision,
+        status: dismissed ? 'dismissed' : 'answered',
+        answer: dismissed ? 'dismissed' : args.choice,
+        rationale: args.rationale,
+        answeredBy: 'user',
+        answeredAt: new Date().toISOString(),
+      }
+      await store.upsertDecision(updated)
+      audit('track_respond_decision', exec, true, `${decision.id} → ${updated.status}`)
+      return dismissed
+        ? `Decision ${decision.id} recorded as dismissed.`
+        : `Decision ${decision.id} recorded: ${updated.answer}${updated.rationale ? ` — ${updated.rationale}` : ''}`
+    },
+    presentCall: (args) => ({ card: 'generic', title: 'Record decision answer', kind: 'other', rawInput: `${args.decision_id} → ${args.choice}` }),
+  }))
+
+  // ---- track_list_decisions: read back decision history ----
+  ctx.tools.register(defineTool({
+    name: 'track_list_decisions',
+    description:
+      'List decision points from the Track store, optionally filtered by state, time, '
+      + 'or session. Answers "which decisions are still pending", "what did the user '
+      + 'decide about X", "why did we choose A".',
+    parameters: {
+      state: { type: 'string', enum: ['pending', 'answered', 'dismissed'], description: 'Lifecycle filter.' },
+      since: { type: 'string', description: 'Only decisions raised after this ISO timestamp or epoch-ms number.' },
+      session_id: { type: 'string', description: 'Only decisions raised in this session.' },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    async execute(args, exec) {
+      await ensureStoreOpen()
+      const since = args.since !== undefined
+        ? (/^\d+$/.test(String(args.since)) ? Number(args.since) : Date.parse(String(args.since)))
+        : undefined
+      if (since !== undefined && Number.isNaN(since)) {
+        throw new Error(`invalid since timestamp: ${String(args.since)}`)
+      }
+      const decisions = await store.listDecisions(args.state, since, args.session_id)
+      audit('track_list_decisions', exec, true, `${decisions.length} decision(s)`)
+      if (decisions.length === 0) return 'No decisions.'
+      return decisions
+        .map((d) => {
+          const head = d.status === 'pending' ? 'PENDING' : d.status.toUpperCase()
+          const answer = d.status === 'answered' ? ` → ${d.answer}` : d.status === 'dismissed' ? ' → dismissed' : ''
+          const when = new Date(Date.parse(d.createdAt)).toISOString().slice(0, 16).replace('T', ' ')
+          return `${d.id} [${head}] ${when} ${d.question}${answer}${d.rationale ? ` — ${d.rationale}` : ''}`
+        })
+        .join('\n')
+    },
+    presentCall: (args) => ({ card: 'generic', title: 'List decisions', kind: 'other', rawInput: args.state ?? 'all' }),
   }))
 
   // ---- track_create_issue: promote structured work ----
@@ -507,6 +584,21 @@ export function apply(ctx: Context, config?: Config) {
       const recent = [...records].sort((a, b) => b.at - a.at).slice(0, limit)
       json(res, { usage: recent, summary })
     })
+    // GET /api/track/decisions[?state=&since=&session_id=] — decision history.
+    registerRoute('/decisions', async (req, res) => {
+      await ensureStoreOpen()
+      const url = new URL(req.url ?? '/', 'http://x')
+      const state = url.searchParams.get('state') as Decision['status'] | null
+      const sinceRaw = url.searchParams.get('since')
+      const sessionId = url.searchParams.get('session_id')
+      const since = sinceRaw !== null
+        ? (/^\d+$/.test(sinceRaw) ? Number(sinceRaw) : Date.parse(sinceRaw))
+        : undefined
+      if (state !== null && !['pending', 'answered', 'dismissed'].includes(state)) {
+        json(res, { error: `invalid state: ${state}` }, 400); return
+      }
+      json(res, { decisions: await store.listDecisions(state ?? undefined, since, sessionId ?? undefined) })
+    })
 
     // ---- action routes (prefix kind: exact wins for the base path, so
     // GET/POST /captures and GET /issues keep their handlers above) ----
@@ -622,4 +714,21 @@ function formatSyncReport(report: SyncReport, dryRun: boolean): string {
     lines.push('Run again with dry_run=false to write these changes.')
   }
   return lines.join('\n')
+}
+
+/**
+ * Render a raised decision as the tool result — the first line carries the
+ * stable decision id that anchors the record in the conversation transcript
+ * (the KV record is the source of truth; this text is the pointer).
+ */
+export function formatDecisionRaised(decision: Decision): string {
+  return (
+    `Decision recorded: ${decision.id}\n`
+    + `Question: ${decision.question}\n`
+    + `Options: ${decision.options.join(' | ')}\n`
+    + `My preference: ${decision.aiPreference} — ${decision.aiRationale}\n`
+    + (decision.impact ? `Impact: ${decision.impact}\n` : '')
+    + `Waiting on: ${decision.need}\n`
+    + '（用户回答后请调用 track_respond_decision 记录选择与理由）'
+  )
 }
