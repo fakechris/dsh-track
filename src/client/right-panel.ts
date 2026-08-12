@@ -93,8 +93,15 @@ async function jumpToConversation(opts: { sessionId?: string; messageId?: string
   // Runtime face: the browser's `ctx.sessions` is the client SessionsService
   // (ISessions — the documented outward face). The host @deepseek-ai/dsh-session
   // package augments the same cordis Context with its own `sessions:
-  // SessionStore`, which hijacks the property type — cast past that.
-  const sessions = (clientCtx as unknown as { sessions: ISessions }).sessions
+  // SessionStore`, which hijacks the property type — cast past that. cordis
+  // also throws on undeclared-service property access, so 'sessions' is in
+  // the plugin inject list AND the access is guarded here.
+  let sessions: ISessions
+  try {
+    sessions = (clientCtx as unknown as { sessions: ISessions }).sessions
+  } catch {
+    return // sessions service unavailable — nothing to jump to
+  }
   try {
     sessions.open(sessionId as SessionId)
   } catch {
