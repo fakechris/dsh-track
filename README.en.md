@@ -96,6 +96,36 @@ pnpm run build      # tsc artifacts to lib/
 pnpm test           # vitest
 ```
 
+## Session-log boundary (plugin event convention)
+
+> Background (2026-08-11 incident): early dsh-track wrote custom events into
+> session logs (`track/decision`, `track/sync-preview`). Since the 0811
+> snapshot, the harness session-event whitelist (`KNOWN_SESSION_EVENT_TYPES`) is
+> generated at compile time from the in-repo `SessionEventMap`, and
+> **out-of-repo plugin events are outside it by construction**; the reader
+> REFUSES the whole log for an unknown type without an `ignorable` marker
+> (better refuse than misread — it assumes a newer harness wrote it). That made
+> 6 old sessions unopenable on the new harness (fixed with
+> `repair-unknown-events.mjs` adding `ignorable: true`, zero content loss).
+
+**Rules (must follow):**
+
+1. **No business data in session logs** — persistent data (tasks/issues/
+   decisions/usage) lives in your own storage (TrackStore KV here); do not
+   append custom session events.
+2. **Observe sessions via official events** — subscribe to `session/event` and
+   the official structured event stream; read-only, never write.
+3. **Do not write custom session events** — the official registration surface
+   is explicitly deferred until a real consumer exists; until then any write is
+   an "unknown type" that breaks old sessions on newer harnesses.
+4. If a side-channel record is genuinely needed (audit/preview/cache — safe to
+   lose), it **must carry `ignorable: true`** — that marker's contract is "this
+   event may be skipped without affecting reconstruction", so it must never
+   carry critical data.
+5. Existing logs with unknown events → `dsh-session-recovery` skill's
+   `repair-unknown-events.mjs --id <session-id>` (or `--all`) marks them
+   ignorable.
+
 ## Layout
 
 ```
