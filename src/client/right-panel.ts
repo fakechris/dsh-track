@@ -280,7 +280,11 @@ function syncGrid(): void {
 function render(snapshot: Snapshot): void {
   if (panel === null) return
   const q = (sel: string): HTMLElement | null => panel!.querySelector(sel)
-  const openCaptures = snapshot.captures.filter((c) => c.status === 'open')
+  // Newest first (user feedback 2026-08-12: the capture wall was showing
+  // insertion order = oldest on top). createdAt desc, id tiebreak for stability.
+  const openCaptures = snapshot.captures
+    .filter((c) => c.status === 'open')
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime() || (a.id < b.id ? 1 : -1))
 
   const capEl = q('.inv-captures')
   if (capEl !== null) {
@@ -305,11 +309,16 @@ function render(snapshot: Snapshot): void {
     if (issCount !== null) issCount.textContent = snapshot.issues.length > 0 ? `(${snapshot.issues.length})` : ''
     // Organize: in_progress first, then todo/done/canceled; newest updatedAt
     // within each group (user feedback 2026-08-11: reverse-chronological).
+    // updatedAt ties are common (sync writes batches with same-second
+    // timestamps), so break ties by createdAt desc — otherwise the stable sort
+    // falls back to KV insertion order = oldest first (2026-08-12 feedback).
     const ordered = [...snapshot.issues].sort((a, b) => {
       const ga = STATE_ORDER[a.state] ?? 9
       const gb = STATE_ORDER[b.state] ?? 9
       if (ga !== gb) return ga - gb
       return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+        || new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        || (a.id < b.id ? 1 : -1)
     })
     const totalPages = Math.max(1, Math.ceil(ordered.length / ISSUES_PER_PAGE))
     if (issuePage >= totalPages) issuePage = totalPages - 1
