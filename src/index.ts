@@ -16,7 +16,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { KvFacet } from '@deepseek-ai/dsh-storage'
-// Type-only: pulls the ctx.httpServer Context merge from dsh-host-webserver.
+// Type-only: pulls the ctx.webServer Context merge from dsh-host-webserver.
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { TrackStore, makeId } from './store.ts'
 import type { Capture, Decision, EvidenceRef, Issue, IssueState, LlmUsageRecord } from './types.ts'
@@ -694,11 +694,11 @@ export function apply(ctx: Context, config?: Config) {
     return () => disposeAutoCapture()
   })
 
-  // ---- HTTP API for the Web client panel (optional: needs httpServer) ----
+  // ---- HTTP API for the Web client panel (optional: needs webServer) ----
   // The client plugin fetches captures/decisions/issues over these routes so
   // the panel has a data face without an api-remotes generated pipeline.
-  ctx.inject(['httpServer'], (serverCtx) => {
-    console.log('[dsh-track] httpServer inject fired')
+  ctx.inject(['webServer'], (serverCtx) => {
+    console.log('[dsh-track] webServer inject fired')
     const json = (res: ServerResponse, body: unknown, status = 200): void => {
       res.writeHead(status, { 'content-type': 'application/json' })
       res.end(JSON.stringify(body))
@@ -718,7 +718,7 @@ export function apply(ctx: Context, config?: Config) {
     // (A prior version wrapped register in an `api(path)` helper that was
     // returned but never invoked — routes were never registered.)
     const registerRoute = (path: string, handler: (req: IncomingMessage, res: ServerResponse) => Promise<void> | void) =>
-      serverCtx.httpServer.register({
+      serverCtx.webServer.register({
         kind: 'exact',
         path: `/api/track${path}`,
         handler: (req, res) => Promise.resolve(handler(req, res)).catch((e) => {
@@ -796,7 +796,7 @@ export function apply(ctx: Context, config?: Config) {
       return segments.length >= 1 ? decodeURIComponent(segments[0]) : null
     }
     const registerAction = (prefix: string, handler: (req: IncomingMessage, res: ServerResponse) => Promise<void> | void) =>
-      serverCtx.httpServer.register({
+      serverCtx.webServer.register({
         kind: 'prefix',
         path: `/api/track${prefix}`,
         handler: (req, res) => Promise.resolve(handler(req, res)).catch((e) => {
