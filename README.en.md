@@ -37,6 +37,9 @@ dsh web
 | `report_decision_point(question, options, my_preference, rationale, impact, need)` | raise a decision point when the AI hits irreversible/risky/scope/acceptance decisions; the user answers with a lightweight choice; auto-persisted to the decision ledger |
 | `track_respond_decision(decision_id, choice, rationale?)` | record the user's answer (choice + rationale) after they respond; idempotent; `dismissed` to skip |
 | `track_list_decisions(state?, since?, session_id?)` | read decision history (pending / answered / dismissed) |
+| `track_attach_issue(issue_id)` | declare the current session is driving an issue; execution evidence is then recorded against it automatically |
+| `track_update_issue_state(issue_id, target, note?, confirmed_by_user?)` | propose or confirm a state change; done/canceled require `confirmed_by_user=true` (the system never auto-marks done) |
+| `track_issue_evidence(issue_id)` | read one issue's evidence ledger and inferred state |
 | `track_create_issue(title, description?, priority?, acceptance?, parent_id?)` | create a Linear-compatible issue |
 | `track_list_issues(team_id?, state?)` | list issues |
 | `track_sync_history(workspace?, since?, dry_run?, max_sessions?, engine?)` | fold workspace session history into epic/issue candidates (dry-run by default) |
@@ -54,6 +57,24 @@ the user answers, the model records it via `track_respond_decision`
 (`choice='dismissed'` to skip). Query surfaces: the `track_list_decisions` tool,
 `GET /api/track/decisions`, the panel (planned), and `decisions.answerRate` in
 the funnel. Retention is independent of session logs (KV outlives conversations).
+
+## Task lifecycle (evidence-driven)
+
+The local runtime has no structured CI/deploy signals (git and builds go through
+bash), so `done` cannot be auto-claimed from "looks finished". Design
+(2026-08-12, external-research Q3):
+
+- **Two fields**: `state` (confirmed truth, Linear 4-value) vs `inferred`
+  (machine proposal: state + confidence + evidence ledger).
+- **Evidence observer** (`lifecycle/observe.ts`) converts the structured event
+  stream (todo snapshots, turn/end reasons, tool errors, file activity, user
+  confirm phrases) into EvidenceRefs, recorded only against the currently
+  ATTACHED issue.
+- **State machine** (`lifecycle/state-machine.ts`, pure): the only auto-committed
+  transition is the reversible todo → in_progress; **done / canceled always need
+  a user nod** (panel / `confirmed_by_user=true`); 14 days without progress
+  proposes cancellation. Model entry points: `track_attach_issue` /
+  `track_update_issue_state` / `track_issue_evidence` (SKILL.md「任务推进」discipline).
 
 ## Capture motivation context
 

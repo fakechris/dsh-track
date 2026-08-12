@@ -19,13 +19,15 @@ import type { KvFacet } from '@deepseek-ai/dsh-storage'
 // Type-only: pulls the ctx.httpServer Context merge from dsh-host-webserver.
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { TrackStore, makeId } from './store.ts'
-import type { Capture, Decision, Issue, LlmUsageRecord } from './types.ts'
+import type { Capture, Decision, EvidenceRef, Issue, IssueState, LlmUsageRecord } from './types.ts'
 import { runSync } from './sync/run.ts'
 import { createAutoCapture } from './capture/observe.ts'
 import { backfillCaptureContext } from './capture/backfill.ts'
 import { latestUserRequest, type ContextSessionQuery } from './capture/context.ts'
 import { setUsageRecorder } from './sync/llm.ts'
 import { createUsageRecorder, formatUsageReport, summarizeUsage } from './usage.ts'
+import { createLifecycleObserver } from './lifecycle/observe.ts'
+import { evidenceWeight, describeEvidence } from './lifecycle/state-machine.ts'
 import type { SyncOptions, SyncReport, SyncDeps as SyncReportDeps } from './sync/run.ts'
 
 export const name = '@deepseek-ai/dsh-track'
@@ -87,11 +89,13 @@ export function apply(ctx: Context, config?: Config) {
     openPromise ??= resolveKv(ctx).then((kv) => store.open(kv))
     return openPromise
   }
+  /** Lifecycle evidence observer handle — wired once the store opens. */
+  let lifecycle: ReturnType<typeof createLifecycleObserver> | undefined
 
   // Observability: one audit row per model-facing tool call so funnel
   // questions are answered by the store, not by session-log archaeology.
   // Fire-and-forget: audit must never break the tool's real work.
-  const audit = (tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history' | 'track_usage' | 'track_backfill_captures' | 'track_respond_decision' | 'track_list_decisions', exec: { agent?: { id?: string } }, ok: boolean, detail?: string): void => {
+  const audit = (tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history' | 'track_usage' | 'track_backfill_captures' | 'track_respond_decision' | 'track_list_decisions' | 'track_attach_issue' | 'track_update_issue_state' | 'track_issue_evidence', exec: { agent?: { id?: string } }, ok: boolean, detail?: string): void => {
     void ensureStoreOpen()
       .then(() => store.appendAudit({
         id: makeId('audit'),
@@ -114,11 +118,17 @@ export function apply(ctx: Context, config?: Config) {
       // Wire the LLM usage ledger: every ctx.llm call the engine makes is
       // appended to the store (fire-and-forget; see sync/llm.ts metering).
       setUsageRecorder(createUsageRecorder(store))
+      // Wire the lifecycle evidence observer (Part B): converts the structured
+      // tool stream into evidence for the attached issue of each session.
+      lifecycle = createLifecycleObserver(ctx, { store })
     } catch (e) {
       console.error('[dsh-track] store open failed:', e)
       throw e
     }
-    return () => store.close()
+    return () => {
+      lifecycle?.dispose()
+      store.close()
+    }
   })
 
   // ---- capture_thought: drop a thought into the capture wall ----
@@ -284,6 +294,150 @@ export function apply(ctx: Context, config?: Config) {
         .join('\n')
     },
     presentCall: (args) => ({ card: 'generic', title: 'List decisions', kind: 'other', rawInput: args.state ?? 'all' }),
+  }))
+
+  // ---- track_attach_issue: declare the current session is driving an issue ----
+  // The evidence observer only records signals for the attached issue; this is
+  // the model-driven attachment (Part B). One session owns one issue at a time.
+  ctx.tools.register(defineTool({
+    name: 'track_attach_issue',
+    description:
+      'Declare that the current session is driving a specific issue. Call this when '
+      + 'starting work on an issue (e.g. at plan time, with the first todo) — the '
+      + 'lifecycle observer then records execution evidence (todo completion, turn '
+      + 'outcomes, tool errors) against this issue automatically, and the state '
+      + 'machine proposes progress. Accepts an issue id or identifier (INV-12).',
+    parameters: {
+      issue_id: { type: 'string', required: true, description: 'Issue id or identifier (e.g. INV-12).' },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    async execute(args, exec) {
+      if (!exec.agent) {
+        throw new Error('track_attach_issue requires an owning agent session')
+      }
+      await ensureStoreOpen()
+      const issue = await store.attachSession(args.issue_id, exec.agent.id)
+      if (!issue) {
+        throw new Error(`issue not found: ${args.issue_id}`)
+      }
+      lifecycle?.attach(exec.agent.id, issue.id)
+      audit('track_attach_issue', exec, true, `${issue.identifier} ← ${exec.agent.id}`)
+      return (
+        `Attached ${issue.identifier} (${issue.title}) to this session.\n`
+        + 'Execution evidence will be recorded against it automatically; I will ask '
+        + 'for confirmation before marking it done.'
+      )
+    },
+    presentCall: (args) => ({ card: 'generic', title: 'Attach issue', kind: 'other', rawInput: args.issue_id }),
+  }))
+
+  // ---- track_update_issue_state: propose or confirm an issue state change ----
+  ctx.tools.register(defineTool({
+    name: 'track_update_issue_state',
+    description:
+      'Propose an issue state change (recorded as model evidence) or confirm one. '
+      + 'For in_progress/todo, a proposal is enough. For done/canceled you MUST pass '
+      + 'confirmed_by_user=true — the user has to confirm completion or abandonment '
+      + 'explicitly; the system never auto-marks an issue done.',
+    parameters: {
+      issue_id: { type: 'string', required: true, description: 'Issue id or identifier (e.g. INV-12).' },
+      target: { type: 'string', required: true, enum: ['todo', 'in_progress', 'done', 'canceled'], description: 'Target state.' },
+      note: { type: 'string', description: 'Optional human note (recorded as evidence pointer).' },
+      confirmed_by_user: { type: 'boolean', description: 'MUST be true for done/canceled: the user explicitly confirmed this change.' },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    async execute(args, exec) {
+      if (!exec.agent) {
+        throw new Error('track_update_issue_state requires an owning agent session')
+      }
+      await ensureStoreOpen()
+      const issue = await store.getIssueByInput(args.issue_id)
+      if (!issue) {
+        throw new Error(`issue not found: ${args.issue_id}`)
+      }
+      const target = args.target as IssueState
+      if ((target === 'done' || target === 'canceled') && !args.confirmed_by_user) {
+        return (
+          `${issue.identifier} is ${issue.state}; marking it ${target} requires explicit `
+          + 'user confirmation — ask the user first, then call again with confirmed_by_user=true.'
+        )
+      }
+      if (args.confirmed_by_user) {
+        const updated = await store.confirmIssueState(issue.id, target)
+        audit('track_update_issue_state', exec, true, `${issue.identifier} → ${target} (confirmed)`)
+        return `${issue.identifier} marked ${target} (confirmed).`
+      }
+      // Plain proposal: record model-propose evidence; the machine decides.
+      const signal: EvidenceRef = {
+        signal: 'model-propose',
+        at: Date.now(),
+        weight: evidenceWeight('model-propose', target),
+        sessionId: exec.agent.id,
+        pointer: args.note ?? target,
+      }
+      const result = await store.recordIssueEvidence(issue.id, signal, exec.agent.id)
+      audit('track_update_issue_state', exec, true, `${issue.identifier} propose ${target}`)
+      if (!result) throw new Error(`issue not found: ${args.issue_id}`)
+      const state = result.issue.state
+      const inferred = result.issue.inferred
+      const lines = [
+        `${issue.identifier} proposal recorded (${target}).`,
+        `Current state: ${state}${state !== issue.state ? ' (auto-advanced from ' + issue.state + ')' : ''}`,
+        inferred ? `Inferred: ${inferred.state} @ ${(inferred.confidence * 100).toFixed(0)}%` : '',
+      ]
+      if (result.confirm) {
+        lines.push(`Pending confirmation: mark ${result.confirm.to} (${result.confirm.reason}). Ask the user.`)
+      }
+      return lines.filter(Boolean).join('\n')
+    },
+    presentCall: (args) => ({ card: 'generic', title: 'Update issue state', kind: 'other', rawInput: `${args.issue_id} → ${args.target}` }),
+  }))
+
+  // ---- track_issue_evidence: read the evidence ledger of one issue ----
+  ctx.tools.register(defineTool({
+    name: 'track_issue_evidence',
+    description:
+      'Read the evidence ledger and machine-inferred state of one issue: which signals '
+      + 'were observed (todo completion, turn outcomes, tool errors, user confirm), the '
+      + 'composite confidence, and whether a done/canceled change is pending confirmation. '
+      + 'Accepts an issue id or identifier.',
+    parameters: {
+      issue_id: { type: 'string', required: true, description: 'Issue id or identifier (e.g. INV-12).' },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    async execute(args, exec) {
+      await ensureStoreOpen()
+      const issue = await store.getIssueByInput(args.issue_id)
+      if (!issue) {
+        throw new Error(`issue not found: ${args.issue_id}`)
+      }
+      audit('track_issue_evidence', exec, true, issue.identifier)
+      const inferred = issue.inferred
+      const lines = [
+        `${issue.identifier} [${issue.state}] ${issue.title}`,
+        `Last progress: ${issue.lastProgressAt ? new Date(issue.lastProgressAt).toLocaleString() : '—'}`,
+        issue.attachSessionId ? `Attached session: ${issue.attachSessionId}` : '',
+        inferred
+          ? `Inferred: ${inferred.state} @ ${(inferred.confidence * 100).toFixed(0)}% (by ${inferred.by})`
+          : 'Inferred: none yet (no evidence recorded)',
+        '',
+        'Evidence (newest last):',
+        ...(inferred?.evidence.length
+          ? inferred.evidence.map((e) => `  ${e.signal}${e.pointer ? ` (${e.pointer})` : ''} @ ${new Date(e.at).toLocaleString()}${e.sessionId ? ` [${e.sessionId}]` : ''}`)
+          : ['  (none)']),
+      ]
+      return lines.join('\n')
+    },
+    presentCall: (args) => ({ card: 'generic', title: 'Issue evidence', kind: 'other', rawInput: args.issue_id }),
   }))
 
   // ---- track_create_issue: promote structured work ----
@@ -640,6 +794,18 @@ export function apply(ctx: Context, config?: Config) {
       await ensureStoreOpen()
       const id = idFromUrl(req, '/api/track/issues')
       if (id === null) { json(res, { error: 'issue id required' }, 400); return }
+      const pathname = new URL(req.url ?? '/', 'http://x').pathname
+      // GET /api/track/issues/:id/evidence — the evidence ledger (Part B).
+      if (req.method === 'GET' && pathname.endsWith('/evidence')) {
+        const issue = await store.getIssueByInput(id)
+        if (!issue) { json(res, { error: 'issue not found' }, 404); return }
+        json(res, {
+          issue: { id: issue.id, identifier: issue.identifier, state: issue.state, title: issue.title },
+          lastProgressAt: issue.lastProgressAt ?? null,
+          attachSessionId: issue.attachSessionId ?? null,
+          inferred: issue.inferred ?? null,
+        }); return
+      }
       if (req.method === 'DELETE') {
         await store.deleteIssue(id)
         json(res, { ok: true }); return

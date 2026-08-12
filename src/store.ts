@@ -22,7 +22,9 @@ import {
   type Issue,
   type Link,
   type LlmUsageRecord,
+  type EvidenceRef,
 } from './types.ts'
+import { MAX_EVIDENCE, isAutoCommit, nextInferred } from './lifecycle/state-machine.ts'
 
 /** Branded identifier prefixes keep record ids recognizable and collision-free. */
 export const ID_PREFIX = {
@@ -234,6 +236,98 @@ export class TrackStore {
   async deleteIssue(id: string): Promise<void> {
   await this.ready()
     await this.chain('issues', () => this.unit.deleteRecord('issues', id))
+  }
+
+  /** Resolve an issue by its store id OR Linear-style identifier (INV-12). */
+  async getIssueByInput(input: string): Promise<Issue | undefined> {
+  await this.ready()
+    const { tables } = await this.unit.loadAll()
+    const issues = Object.values(tables.issues ?? {}) as Issue[]
+    return issues.find((i) => i.id === input || i.identifier === input)
+  }
+
+  /**
+   * Declare that `sessionId` is driving this issue (track_attach_issue).
+   * Sets attachSessionId, appends the session to linkedSessionIds (R8
+   * traceability), and clears any previous attachment so one session owns
+   * one issue at a time.
+   */
+  async attachSession(issueId: string, sessionId: string): Promise<Issue | undefined> {
+  await this.ready()
+    const { tables } = await this.unit.loadAll()
+    const issues = Object.values(tables.issues ?? {}) as Issue[]
+    const target = issues.find((i) => i.id === issueId || i.identifier === issueId)
+    if (!target) return undefined
+    // Clear a stale attachment pointing at another issue from the same session.
+    for (const other of issues) {
+      if (other.id !== target.id && other.attachSessionId === sessionId) {
+        await this.chain('issues', () => this.unit.putRecord('issues', other.id, { ...other, attachSessionId: undefined }))
+      }
+    }
+    const updated: Issue = {
+      ...target,
+      attachSessionId: sessionId,
+      linkedSessionIds: target.linkedSessionIds.includes(sessionId)
+        ? target.linkedSessionIds
+        : [...target.linkedSessionIds, sessionId],
+      updatedAt: new Date().toISOString(),
+    }
+    await this.chain('issues', () => this.unit.putRecord('issues', target.id, updated))
+    return updated
+  }
+
+  /**
+   * Record one evidence signal against an issue, re-evaluate the state
+   * machine, and apply the result: write `inferred`, update `lastProgressAt`
+   * on positive signals, and auto-commit `state` only for the safe
+   * todo → in_progress transition. Confirmation-gated proposals (done /
+   * canceled) are returned in `confirm` and NOT written to `state`.
+   */
+  async recordIssueEvidence(issueId: string, signal: EvidenceRef, sessionId: string, now = Date.now()): Promise<{ issue: Issue; confirm?: { to: Issue['state']; reason: string } } | null> {
+  await this.ready()
+    const issue = await this.getIssue(issueId)
+    if (!issue) return null
+    const evidence = [...(issue.inferred?.evidence ?? []), signal].slice(-MAX_EVIDENCE)
+    const next = nextInferred(issue, evidence, now)
+    const updated: Issue = {
+      ...issue,
+      lastProgressAt: signal.weight > 0 && signal.signal !== 'user-confirm'
+        ? Math.max(issue.lastProgressAt ?? 0, signal.at)
+        : issue.lastProgressAt,
+      inferred: next.inferred,
+      updatedAt: new Date().toISOString(),
+    }
+    // Auto-commit only the reversible todo → in_progress transition.
+    if (isAutoCommit(next, issue)) {
+      updated.state = 'in_progress'
+    }
+    await this.chain('issues', () => this.unit.putRecord('issues', issue.id, updated))
+    return { issue: updated, confirm: next.confirm }
+  }
+
+  /**
+   * Commit a state change on explicit confirmation (user nod / panel / a
+   * confirmed_by_user tool call). Writes `state` and records the confirmed
+   * state as the current inference.
+   */
+  async confirmIssueState(issueId: string, state: Issue['state'], by: 'user' | 'model' = 'user', now = Date.now()): Promise<Issue | undefined> {
+  await this.ready()
+    const issue = await this.getIssue(issueId)
+    if (!issue) return undefined
+    const updated: Issue = {
+      ...issue,
+      state,
+      inferred: {
+        state,
+        confidence: 1,
+        evidence: issue.inferred?.evidence ?? [],
+        at: now,
+        by,
+      },
+      updatedAt: new Date().toISOString(),
+    }
+    await this.chain('issues', () => this.unit.putRecord('issues', issue.id, updated))
+    return updated
   }
 
   // ---- epics ----

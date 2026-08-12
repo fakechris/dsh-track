@@ -34,6 +34,9 @@ dsh web
 | `report_decision_point(question, options, my_preference, rationale, impact, need)` | AI 遇到不可逆/风险/范围/验收决策时上报，用户轻决策回答；自动存入决策账本 |
 | `track_respond_decision(decision_id, choice, rationale?)` | 用户回答后落盘选择与理由（幂等；`dismissed` 表示跳过） |
 | `track_list_decisions(state?, since?, session_id?)` | 查决策历史（含待确认/已回答/已跳过） |
+| `track_attach_issue(issue_id)` | 声明当前会话正在推进某 issue；此后执行证据自动记到该 issue |
+| `track_update_issue_state(issue_id, target, note?, confirmed_by_user?)` | 提议/确认状态变更；done/canceled 必须带 `confirmed_by_user=true`（系统永不自动标 done） |
+| `track_issue_evidence(issue_id)` | 查某 issue 的证据账本与推断状态 |
 | `track_create_issue(title, description?, priority?, acceptance?, parent_id?)` | 创建 Linear 兼容 issue |
 | `track_list_issues(team_id?, state?)` | 列出 issue |
 | `track_sync_history(workspace?, since?, dry_run?, max_sessions?, engine?)` | 把工作区 session 历史折叠成 epic/issue 候选（默认 dry-run） |
@@ -49,6 +52,19 @@ dsh web
 `track_respond_decision` 落盘（`choice='dismissed'` 表示跳过）。查询面：
 `track_list_decisions` 工具、`GET /api/track/decisions`、面板（规划中）、
 funnel 的 `decisions.answerRate`。保留期独立于会话日志（KV 本就不随会话删除）。
+
+## 任务生命周期（evidence-driven lifecycle）
+
+本地运行时没有结构化 CI/deploy 信号（git/构建都走 bash），所以 `done` 不能靠
+"看起来做完了"自动达成。设计（2026-08-12，对应外部研究 Q3）：
+
+- **双字段**：`state`（已确认的真相，Linear 4 值）vs `inferred`（机器提案：状态+置信度+证据账本）。
+- **证据观察器**（`lifecycle/observe.ts`）把结构化事件流（todo 全量快照、turn/end reason、
+  tool 错误、文件活动、用户确认短语）转成 EvidenceRef，只对**当前 attach 的 issue** 记录。
+- **状态机**（`lifecycle/state-machine.ts`，纯函数）：唯一自动落盘的是可逆的
+  todo → in_progress；**done / canceled 永远需要用户确认**（面板/`confirmed_by_user=true`），
+  14 天无进展会提议取消。模型侧入口：`track_attach_issue` / `track_update_issue_state` /
+  `track_issue_evidence`（SKILL.md「任务推进」纪律）。
 
 ## 捕获动机链（capture motivation context）
 
