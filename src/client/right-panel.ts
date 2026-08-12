@@ -10,6 +10,8 @@
  * @module @deepseek-ai/dsh-track/client/right-panel
  */
 
+import { conversationContextKey } from '@deepseek-ai/dsh-client-runtime/client'
+import type { ClientContext, ISessions, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { Capture, Issue } from '../types.ts'
 
 /** Stable ids for the injected panel and toggle. */
@@ -18,6 +20,132 @@ export const FAB_ID = 'dsh-track-fab'
 
 const OPEN_KEY = 'dsh.track.open'
 const WIDTH_KEY = 'dsh.track.width'
+
+/**
+ * ---- jump back to the source conversation ----
+ * Each card's "↩ 对话" link opens the entry's source session in the left
+ * conversation and scrolls to the user prompt that motivated it (when the
+ * message id is known). Mechanics:
+ *  - `ctx.sessions.open(id)` selects the session (public ISessions face).
+ *  - `ctx.sessions.binding(id)?.session` is the `SessionFace`: its
+ *    `getSnapshot()` exposes `chat.nodes` (node keys) and `hasMore`, and
+ *    `loadOlder()` pages the history window backwards — so a jump reaches
+ *    messages older than the initially loaded window.
+ *  - Chat rows render with `data-chat-flow-key` = `conversationContextKey(
+ *    'input-message', messageId)` (the exported runtime key format), which
+ *    is how the row is located after the session opens.
+ */
+
+let clientCtx: ClientContext | null = null
+
+/** Bounded "deep history" pages to walk before giving up on an old prompt. */
+const MAX_PAGES = 40
+const POLL_MS = 120
+const TIMEOUT_MS = 10_000
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** Poll `fn()` until truthy or the timeout elapses. */
+async function pollUntil(fn: () => boolean, timeoutMs = TIMEOUT_MS): Promise<boolean> {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    if (fn()) return true
+    await sleep(POLL_MS)
+  }
+  return fn()
+}
+
+/** Poll `fn()` until it returns a defined value, or the timeout elapses. */
+async function pollValue<T>(fn: () => T | undefined, timeoutMs = TIMEOUT_MS): Promise<T | undefined> {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    const value = fn()
+    if (value !== undefined) return value
+    await sleep(POLL_MS)
+  }
+  return fn()
+}
+
+/** Find a chat row by its stable flow key (dataset compare — no selector escaping). */
+function findRowByKey(scroll: HTMLElement, key: string): HTMLElement | null {
+  for (const el of scroll.querySelectorAll<HTMLElement>('[data-chat-flow-key]')) {
+    if (el.dataset.chatFlowKey === key) return el
+  }
+  return null
+}
+
+/** Briefly flash a chat row so the jump target is obvious. */
+function flashRow(el: HTMLElement): void {
+  el.classList.add('inv-jump-flash')
+  window.setTimeout(() => el.classList.remove('inv-jump-flash'), 2600)
+}
+
+/**
+ * Open `sessionId` in the left conversation and scroll to `messageId`'s user
+ * prompt row. Falls back to the first user message in the loaded window,
+ * then to the bottom, when the message cannot be located.
+ */
+async function jumpToConversation(opts: { sessionId?: string; messageId?: string }): Promise<void> {
+  const { sessionId, messageId } = opts
+  if (!sessionId || clientCtx === null) return
+  // Runtime face: the browser's `ctx.sessions` is the client SessionsService
+  // (ISessions — the documented outward face). The host @deepseek-ai/dsh-session
+  // package augments the same cordis Context with its own `sessions:
+  // SessionStore`, which hijacks the property type — cast past that.
+  const sessions = (clientCtx as unknown as { sessions: ISessions }).sessions
+  try {
+    sessions.open(sessionId as SessionId)
+  } catch {
+    return // unknown session — nothing to jump to
+  }
+  // The scope/binding mints asynchronously after open(); poll for the face.
+  const session = await pollValue(() => sessions.binding(sessionId as SessionId)?.session)
+  if (session === undefined) return
+  await pollUntil(() => session.getSnapshot().openState === 'open')
+  const key = messageId !== undefined && messageId !== ''
+    ? conversationContextKey('input-message', messageId)
+    : undefined
+  // Walk the history window backwards until the message is loaded.
+  if (key !== undefined) {
+    for (let i = 0; i < MAX_PAGES; i++) {
+      const snap = session.getSnapshot()
+      if (snap.chat.nodes.get(key) !== undefined) break
+      if (!snap.hasMore) break
+      await session.loadOlder().catch(() => { /* paging is best-effort */ })
+      await pollUntil(() => !session.getSnapshot().loadingOlder)
+    }
+  }
+  // Wait for React to render the target row, then scroll + flash.
+  const scroll = document.querySelector<HTMLElement>('[data-conversation-scroll]')
+  let row: HTMLElement | null = null
+  if (key !== undefined && scroll !== null) {
+    row = findRowByKey(scroll, key)
+    if (row === null) {
+      const start = Date.now()
+      while (Date.now() - start < TIMEOUT_MS) {
+        await sleep(POLL_MS)
+        row = findRowByKey(scroll, key)
+        if (row !== null) break
+      }
+    }
+  }
+  if (row !== null) {
+    flashRow(row)
+    row.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    return
+  }
+  // Fallback: first user prompt row in the loaded window, else the bottom.
+  // (Chat rows carry the *view* kind: 'user' | 'steering' | 'context'.)
+  const first = scroll?.querySelector<HTMLElement>('[data-chat-flow-kind="user"]')
+  if (first !== null && first !== undefined) {
+    flashRow(first)
+    first.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    return
+  }
+  if (scroll !== null) scroll.scrollTop = scroll.scrollHeight
+}
 
 /** ---- data fetching (host HTTP API) ---- */
 
@@ -167,6 +295,18 @@ const PANEL_CSS = `
   font-size: 11.5px; cursor: pointer;
 }
 #${PANEL_ID} .inv-act:hover { background: var(--dsw-alias-bg-layer-1, rgba(0,0,0,.05)); }
+#${PANEL_ID} .inv-act.inv-jump {
+  color: #2f6fd0; border-color: rgba(47,111,208,.35);
+}
+#${PANEL_ID} .inv-act.inv-jump:hover { background: rgba(47,111,208,.08); }
+#${PANEL_ID} .inv-jump-flash {
+  animation: inv-jump-flash 2.4s ease-out;
+  border-radius: 8px;
+}
+@keyframes inv-jump-flash {
+  0% { box-shadow: 0 0 0 3px rgba(76,141,255,.85); background: rgba(76,141,255,.16); }
+  100% { box-shadow: 0 0 0 3px rgba(76,141,255,0); background: rgba(76,141,255,0); }
+}
 #${PANEL_ID} .inv-act.inv-danger {
   border-color: #e5484d; background: #e5484d; color: #fff;
 }
@@ -351,11 +491,14 @@ function render(snapshot: Snapshot): void {
 function renderCaptureCard(c: Capture): string {
   const meta = `${c.tags.map(escapeHtml).join(' · ')}${c.tags.length ? ' · ' : ''}${new Date(c.createdAt).toLocaleString()}`
   const isConfirming = confirmCaptureDeleteId === c.id
+  const jump = c.sourceSessionId
+    ? `<button class="inv-act inv-jump" data-jump-session="${escapeHtml(c.sourceSessionId)}" data-jump-message="${escapeHtml(c.sourceMessageId ?? '')}" title="跳回对话中的这条 prompt">↩ 对话</button>`
+    : ''
   const actions = isConfirming
     ? `<span class="inv-confirm-hint">确认删除？</span>` +
       `<button class="inv-act inv-danger" data-capture-del="${c.id}">确认</button>` +
       `<button class="inv-act" data-capture-cancel="1">取消</button>`
-    : `<button class="inv-act" data-capture-promote="${c.id}" title="转为任务">转任务</button>` +
+    : `${jump}<button class="inv-act" data-capture-promote="${c.id}" title="转为任务">转任务</button>` +
       `<button class="inv-act inv-danger-ghost" data-capture-del-ask="${c.id}">删除</button>`
   return `<div class="inv-card">${escapeHtml(c.content)}<div class="inv-meta">${meta}</div><div class="inv-actions">${actions}</div></div>`
 }
@@ -364,11 +507,15 @@ function renderCaptureCard(c: Capture): string {
 function renderIssueCard(i: Issue): string {
   const expanded = expandedIssueId === i.id
   const isConfirming = confirmIssueDeleteId === i.id
+  const sessionId = i.attachSessionId ?? i.linkedSessionIds[0]
+  const jump = sessionId
+    ? `<button class="inv-act inv-jump" data-jump-session="${escapeHtml(sessionId)}" data-jump-message="${escapeHtml(i.promptMessageId ?? '')}" title="跳回对话中的这条 prompt">↩ 对话</button>`
+    : ''
   const actions = isConfirming
     ? `<span class="inv-confirm-hint">确认删除任务？</span>` +
       `<button class="inv-act inv-danger" data-issue-del="${i.id}">确认</button>` +
       `<button class="inv-act" data-issue-cancel="1">取消</button>`
-    : `<button class="inv-act" data-issue-del-ask="${i.id}">删除</button>`
+    : `${jump}<button class="inv-act" data-issue-del-ask="${i.id}">删除</button>`
   const detail = expanded
     ? `<div class="inv-issue-detail">${renderIssueDetail(i)}</div>`
     : ''
@@ -570,8 +717,11 @@ function tryMount(): void {
   }
 }
 
-/** Build the panel DOM, FAB, and wire events. Returns a disposer. */
-export function mountRightPanel(): () => void {
+/** Build the panel DOM, FAB, and wire events. Returns a disposer.
+ *  @param ctx - client root context (needed for the jump-back links:
+ *  `ctx.sessions.open` / `binding` resolve the source conversation). */
+export function mountRightPanel(ctx: ClientContext): () => void {
+  clientCtx = ctx
   // ---- style ----
   const style = document.createElement('style')
   style.textContent = PANEL_CSS
@@ -641,6 +791,15 @@ export function mountRightPanel(): () => void {
         expandedIssueId = expandedIssueId === id ? null : id
         refresh()
       }
+      return
+    }
+    // Jump back to the source conversation (left column) at the prompt.
+    const jump = target.closest<HTMLElement>('[data-jump-session]')
+    if (jump !== null) {
+      void jumpToConversation({
+        sessionId: jump.getAttribute('data-jump-session') ?? undefined,
+        messageId: jump.getAttribute('data-jump-message') || undefined,
+      })
       return
     }
     const delAsk = target.closest<HTMLElement>('[data-capture-del-ask]')
@@ -751,5 +910,6 @@ export function mountRightPanel(): () => void {
     panel = null
     fab = null
     host = null
+    clientCtx = null
   }
 }

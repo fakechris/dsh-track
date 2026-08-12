@@ -169,6 +169,7 @@ export class TrackStore {
       teamId: teamKey,
       labels: [...capture.tags],
       linkedSessionIds: capture.sourceSessionId ? [capture.sourceSessionId] : [],
+      promptMessageId: capture.sourceMessageId,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }

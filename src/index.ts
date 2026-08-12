@@ -23,7 +23,7 @@ import type { Capture, Decision, EvidenceRef, Issue, IssueState, LlmUsageRecord 
 import { runSync } from './sync/run.ts'
 import { createAutoCapture } from './capture/observe.ts'
 import { backfillCaptureContext } from './capture/backfill.ts'
-import { latestUserRequest, type ContextSessionQuery } from './capture/context.ts'
+import { latestUserRequest, type ContextSessionQuery, type UserPromptRef } from './capture/context.ts'
 import { setUsageRecorder } from './sync/llm.ts'
 import { createUsageRecorder, formatUsageReport, summarizeUsage } from './usage.ts'
 import { createLifecycleObserver } from './lifecycle/observe.ts'
@@ -92,6 +92,25 @@ export function apply(ctx: Context, config?: Config) {
   /** Lifecycle evidence observer handle — wired once the store opens. */
   let lifecycle: ReturnType<typeof createLifecycleObserver> | undefined
 
+  /**
+   * Per-session cache of the latest explicit user request (text + message
+   * id). The auto-observer fills it on every live `user/message` and on
+   * log-seed; the tools below read it (with a persisted-log fallback) so
+   * captures/decisions/issues carry the id of the prompt they happened
+   * under — the web panel's deep-link target into the conversation.
+   */
+  const recentUser = new Map<string, UserPromptRef>()
+
+  /** Resolve the current prompt (text + message id) of a session, cached. */
+  const promptOf = async (sessionId: string | undefined): Promise<UserPromptRef | undefined> => {
+    if (!sessionId) return undefined
+    const cached = recentUser.get(sessionId)
+    if (cached) return cached
+    const found = await latestUserRequest(getSessionQuery(ctx) as ContextSessionQuery | undefined, sessionId)
+    if (found) recentUser.set(sessionId, found)
+    return found
+  }
+
   // Observability: one audit row per model-facing tool call so funnel
   // questions are answered by the store, not by session-log archaeology.
   // Fire-and-forget: audit must never break the tool's real work.
@@ -147,13 +166,16 @@ export function apply(ctx: Context, config?: Config) {
       render: (_args, value) => [{ type: 'text', text: value }],
     },
     async execute(args, exec) {
+      const prompt = await promptOf(exec.agent?.id)
       const capture: Capture = {
         id: makeId('capture'),
         content: args.content,
         source: exec.agent ? 'session' : 'user',
         sourceSessionId: exec.agent?.id,
+        sourceMessageId: prompt?.id,
         status: 'open',
         tags: args.tags ?? [],
+        context: prompt?.text,
         createdAt: new Date().toISOString(),
       }
       await store.upsertCapture(capture)
@@ -189,6 +211,7 @@ export function apply(ctx: Context, config?: Config) {
         throw new Error('report_decision_point requires an owning agent session')
       }
       await ensureStoreOpen()
+      const prompt = await promptOf(exec.agent.id)
       const decision: Decision = {
         id: makeId('decision'),
         sessionId: exec.agent.id,
@@ -199,6 +222,8 @@ export function apply(ctx: Context, config?: Config) {
         impact: args.impact ?? '',
         need: args.need ?? 'confirm',
         status: 'pending',
+        context: prompt?.text,
+        contextMessageId: prompt?.id,
         createdAt: new Date().toISOString(),
       }
       // Persist to the KV decisions table (the 20260811 harness refuses to
@@ -466,6 +491,7 @@ export function apply(ctx: Context, config?: Config) {
       render: (_args, value) => [{ type: 'text', text: `Created ${value.identifier} (${value.id})` }],
     },
     async execute(args, exec) {
+      const prompt = await promptOf(exec.agent?.id)
       const issue: Issue = {
         id: makeId('issue'),
         identifier: await store.nextIdentifier(teamKey),
@@ -478,7 +504,10 @@ export function apply(ctx: Context, config?: Config) {
         teamId: teamKey,
         labels: [],
         acceptanceCriteria: args.acceptance,
-        linkedSessionIds: [],
+        // Link the creating session so the web panel can jump back to the
+        // originating conversation (promptMessageId targets its prompt).
+        linkedSessionIds: exec.agent?.id ? [exec.agent.id] : [],
+        promptMessageId: prompt?.id,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       }
@@ -657,9 +686,11 @@ export function apply(ctx: Context, config?: Config) {
     // continued (spliced) session's earlier user requests happened in the
     // PREVIOUS process, so the observer's in-memory cache is empty. Backfill
     // the most recent explicit user request per session (observe.ts seeds
-    // lazily on first signal).
+    // lazily on first signal). The shared `recentUser` cache is written by
+    // the observer and read by the tools (promptOf), so captures/decisions/
+    // issues created after a restart still carry the prompt's message id.
     const seedContext = (sessionId: string) => latestUserRequest(getSessionQuery(ctx) as ContextSessionQuery | undefined, sessionId)
-    const disposeAutoCapture = createAutoCapture(ctx, { store, seedContext })
+    const disposeAutoCapture = createAutoCapture(ctx, { store, seedContext, recentUser })
     return () => disposeAutoCapture()
   })
 
