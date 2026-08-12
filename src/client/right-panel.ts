@@ -136,8 +136,9 @@ async function jumpToConversation(opts: { sessionId?: string; messageId?: string
     row.scrollIntoView({ block: 'center', behavior: 'smooth' })
     return
   }
-  // Fallback: first user message in the loaded window, else the bottom.
-  const first = scroll?.querySelector<HTMLElement>('[data-chat-flow-kind="input-message"]')
+  // Fallback: first user prompt row in the loaded window, else the bottom.
+  // (Chat rows carry the *view* kind: 'user' | 'steering' | 'context'.)
+  const first = scroll?.querySelector<HTMLElement>('[data-chat-flow-kind="user"]')
   if (first !== null && first !== undefined) {
     flashRow(first)
     first.scrollIntoView({ block: 'center', behavior: 'smooth' })
