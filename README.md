@@ -31,7 +31,7 @@
 
 ```sh
 # 1. 安装插件（官方推荐：用发布版 dsh 安装；本地已有 dsh 也可直接 `dsh plugin ...`）
-npx --yes -p @deepseek-ai/dsh@0.0.1-rc.2 dsh plugin --profile web add github:dsh-external/dsh-track
+npx -p @deepseek-ai/dsh dsh plugin --profile web add github:dsh-external/dsh-track
 #    （或本地路径：`... add /absolute/path/to/dsh-track`）
 
 # 2. 安装协议 skill（决策点 / 任务推进的调用纪律，装到默认扫描目录）
