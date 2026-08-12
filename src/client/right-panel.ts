@@ -140,7 +140,7 @@ async function jumpToConversation(opts: { sessionId?: string; messageId?: string
   }
   if (row !== null) {
     flashRow(row)
-    row.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    jumpScrollIntoView(row)
     return
   }
   // Fallback: first user prompt row in the loaded window, else the bottom.
@@ -148,10 +148,28 @@ async function jumpToConversation(opts: { sessionId?: string; messageId?: string
   const first = scroll?.querySelector<HTMLElement>('[data-chat-flow-kind="user"]')
   if (first !== null && first !== undefined) {
     flashRow(first)
-    first.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    jumpScrollIntoView(first)
     return
   }
   if (scroll !== null) scroll.scrollTop = scroll.scrollHeight
+}
+
+/**
+ * Scroll the target row into view, re-applying a few times: a jump into a
+ * RUNNING session fights the ChatView's bottom-follow (every streamed flow
+ * update re-pins to the bottom while the reader is at the bottom). Re-applying
+ * moves the viewport off the bottom, which flips the follow state off, so the
+ * jump sticks. Instant (`auto`) scrolling is used — smooth over very long
+ * distances stalls in Chrome. Re-applies are no-ops once the row is in view.
+ */
+function jumpScrollIntoView(row: HTMLElement): void {
+  const apply = (): void => {
+    row.scrollIntoView({ block: 'center', behavior: 'auto' })
+  }
+  apply()
+  for (let i = 1; i <= 4; i++) {
+    window.setTimeout(apply, i * 300)
+  }
 }
 
 /** ---- data fetching (host HTTP API) ---- */
