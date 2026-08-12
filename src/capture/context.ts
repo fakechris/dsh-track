@@ -13,6 +13,7 @@
 export interface ContextEvent {
   type: string
   data?: {
+    id?: string
     content?: Array<{ type?: string; text?: string }>
     source?: { kind?: string }
   }
@@ -21,6 +22,14 @@ export interface ContextEvent {
 /** Minimal sessionQuery surface for reading one session. */
 export interface ContextSessionQuery {
   readSession(id: string): Promise<{ events: ContextEvent[] }>
+}
+
+/** A user prompt plus the message id that carries it (the deep-link target). */
+export interface UserPromptRef {
+  /** Request text, truncated to the motivation-context bound. */
+  text: string
+  /** `user/message` `data.id` — stable message identity for the web panel. */
+  id?: string
 }
 
 /**
@@ -43,7 +52,7 @@ export function isShortAck(text: string): boolean {
   return !/[。？！?!]$/.test(text)
 }
 
-export function latestUserRequestFromEvents(events: readonly ContextEvent[]): string | undefined {
+export function latestUserRequestFromEvents(events: readonly ContextEvent[]): UserPromptRef | undefined {
   for (const event of [...events].reverse()) {
     if (event.type !== 'user/message') continue
     const source = event.data?.source
@@ -56,7 +65,7 @@ export function latestUserRequestFromEvents(events: readonly ContextEvent[]): st
     if (!text) continue
     // Terse acks are not motivation — keep scanning for the full instruction.
     if (isShortAck(text)) continue
-    return text.slice(0, 200)
+    return { text: text.slice(0, 200), id: event.data?.id }
   }
   return undefined
 }
@@ -65,7 +74,7 @@ export function latestUserRequestFromEvents(events: readonly ContextEvent[]): st
 export async function latestUserRequest(
   sessionQuery: ContextSessionQuery | undefined,
   sessionId: string,
-): Promise<string | undefined> {
+): Promise<UserPromptRef | undefined> {
   if (!sessionQuery) return undefined
   try {
     const snapshot = await sessionQuery.readSession(sessionId)

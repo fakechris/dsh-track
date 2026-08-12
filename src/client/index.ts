@@ -36,7 +36,9 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-track: dictionaries')
 
   // ---- right-side panel (lazyfish/side-panel pattern) ----
-  const panelDisposer = mountRightPanel()
+  // The panel needs the client root context for the "jump back to this
+  // conversation" links (ctx.sessions.open / binding) — pass it through.
+  const panelDisposer = mountRightPanel(ctx)
   ctx.effect(() => panelDisposer, 'dsh-track: right panel')
 
   // ---- composer-dock strip (open capture count) ----

@@ -16,6 +16,14 @@ export interface Capture {
   source: 'user' | 'agent' | 'session'
   /** Source session id when the thought was captured from a session. */
   sourceSessionId?: string
+  /**
+   * Message id of the user prompt behind this capture (`user/message`
+   * `data.id` when `source.kind === 'user'`). The web panel uses it to jump
+   * back to the exact prompt in the left conversation. Best-effort: filled
+   * by the live observer, `capture_thought`, and context backfill; absent
+   * for captures with no session or no explicit user request.
+   */
+  sourceMessageId?: string
   /** Lifecycle state. */
   status: 'open' | 'promoted' | 'archived' | 'rejected'
   /** Free-form tags for clustering. */
@@ -64,6 +72,15 @@ export interface Issue {
   acceptanceCriteria?: string
   /** Sessions that executed this issue (one issue, many sessions). */
   linkedSessionIds: string[]
+  /**
+   * Message id of the user prompt that originated this issue (best-effort).
+   * Set by `track_create_issue` (the current session's latest explicit user
+   * request), by capture promotion (the capture's source message), and by
+   * the sync align pass where the originating request is known. The web
+   * panel falls back to the first user message of the first linked session
+   * when absent.
+   */
+  promptMessageId?: string
   /** ISO 8601 timestamps. */
   createdAt: string
   updatedAt: string
@@ -177,6 +194,9 @@ export interface Decision {
    * when the raising turn carries one.
    */
   context?: string
+  /** Message id of that motivation request (`user/message` `data.id`) —
+   *  the panel's deep link target when jumping back to the conversation. */
+  contextMessageId?: string
   /** Id of a previous decision of the same topic that this one supersedes. */
   supersedesDecisionId?: string
   createdAt: string

@@ -36,7 +36,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { makeId } from '../store.ts'
 import type { TrackStore } from '../store.ts'
-import { isShortAck } from './context.ts'
+import { isShortAck, type UserPromptRef } from './context.ts'
 
 /** Signals the observer reacts to, for testability and logging. */
 export interface AutoCaptureOptions {
@@ -59,6 +59,7 @@ interface TodoWriteArgs {
 
 /** One user/message event's data. */
 interface UserMessageData {
+  id?: string
   content?: Array<{ type?: string; text?: string }>
   source?: { kind?: string }
 }
@@ -73,13 +74,24 @@ interface UserMessageData {
  * PREVIOUS process). seedContext backfills the most recent explicit user
  * request from the persisted session log so a continued session still gets
  * motivation context. Without it, continued sessions never capture context.
+ *
+ * `deps.recentUser` (optional): a caller-owned per-session cache of the latest
+ * explicit user request (`UserPromptRef` — text + message id). The observer
+ * writes into it on every live `user/message` and on seed; the model-facing
+ * tools (capture_thought, report_decision_point, track_create_issue) read the
+ * same map so captures/decisions/issues carry the message id of the prompt
+ * they happened under — the web panel's deep-link target.
  */
-export function createAutoCapture(ctx: Context, deps: { store: TrackStore; seedContext?: (sessionId: string) => Promise<string | undefined> }, options: AutoCaptureOptions = {}): () => void {
+export function createAutoCapture(ctx: Context, deps: {
+  store: TrackStore
+  seedContext?: (sessionId: string) => Promise<string | { text: string; id?: string } | undefined>
+  recentUser?: Map<string, UserPromptRef>
+}, options: AutoCaptureOptions = {}): () => void {
   const tag = options.tag ?? DEFAULT_TAG
   /** sessionId → captured (todo_write dedup: first change of first entry per session). */
   const todoSeen = new Set<string>()
   /** sessionId → most recent FULL user instruction (motivation context, A). */
-  const lastUserRequest = new Map<string, string>()
+  const lastUserRequest = deps.recentUser ?? new Map<string, UserPromptRef>()
   /** sessionIds already seeded from the persisted log (or attempted). */
   const seeded = new Set<string>()
 
@@ -89,20 +101,24 @@ export function createAutoCapture(ctx: Context, deps: { store: TrackStore; seedC
     seeded.add(sessionId)
     if (!deps.seedContext) return
     try {
-      const text = await deps.seedContext(sessionId)
-      if (text) lastUserRequest.set(sessionId, text.slice(0, 200))
+      const seed = await deps.seedContext(sessionId)
+      if (seed) {
+        const ref = typeof seed === 'string' ? { text: seed } : seed
+        lastUserRequest.set(sessionId, { text: ref.text.slice(0, 200), id: ref.id })
+      }
     } catch { /* seeding is best-effort */ }
   }
 
-  const capture = (sessionId: string | undefined, content: string, tags: string[], context?: string): void => {
+  const capture = (sessionId: string | undefined, content: string, tags: string[], prompt?: UserPromptRef): void => {
     void deps.store.upsertCapture({
       id: makeId('capture'),
       content,
       source: 'session',
       sourceSessionId: sessionId,
+      sourceMessageId: prompt?.id,
       status: 'open',
       tags,
-      context,
+      context: prompt?.text,
       createdAt: new Date().toISOString(),
     }).catch(() => { /* capture is best-effort; never break the stream */ })
   }
@@ -124,7 +140,7 @@ export function createAutoCapture(ctx: Context, deps: { store: TrackStore; seedC
           .map((c) => c.text ?? '')
           .join('')
           .trim()
-        if (text && !isShortAck(text)) lastUserRequest.set(sessionId, text.slice(0, 200))
+        if (text && !isShortAck(text)) lastUserRequest.set(sessionId, { text: text.slice(0, 200), id: data?.id })
       }
       return
     }
@@ -138,7 +154,7 @@ export function createAutoCapture(ctx: Context, deps: { store: TrackStore; seedC
     if (event.type !== 'tool/call') return
     const data = event.data as ToolCallData | undefined
     if (!data || typeof data.name !== 'string') return
-    const context = sessionId !== undefined ? lastUserRequest.get(sessionId) : undefined
+    const prompt = sessionId !== undefined ? lastUserRequest.get(sessionId) : undefined
 
     if (data.name === 'todo_write' && sessionId !== undefined && !todoSeen.has(sessionId)) {
       todoSeen.add(sessionId)
@@ -148,7 +164,7 @@ export function createAutoCapture(ctx: Context, deps: { store: TrackStore; seedC
         first = parsed.todos?.[0]?.content
       } catch { /* malformed arguments — skip */ }
       if (first && first.trim()) {
-        capture(sessionId, first.trim(), [tag, 'todo'], context)
+        capture(sessionId, first.trim(), [tag, 'todo'], prompt)
       }
     }
   }

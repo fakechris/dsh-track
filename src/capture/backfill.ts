@@ -42,12 +42,14 @@ export async function backfillCaptureContext(
   let filled = 0
   let skipped = 0
   for (const capture of candidates) {
-    const text = await latestUserRequest(sessionQuery, capture.sourceSessionId!)
-    if (!text) {
+    const prompt = await latestUserRequest(sessionQuery, capture.sourceSessionId!)
+    if (!prompt) {
       skipped += 1
       continue
     }
-    await store.upsertCapture({ ...capture, context: text })
+    // Also backfill the prompt's message id so legacy captures get the same
+    // deep-link target as live captures.
+    await store.upsertCapture({ ...capture, context: prompt.text, sourceMessageId: prompt.id })
     filled += 1
   }
   return { scanned: candidates.length, filled, skipped }

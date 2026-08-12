@@ -131,6 +131,7 @@ describe('createAutoCapture', () => {
     ctx.emit('session/event', { id: 's1' }, {
       type: 'user/message',
       data: {
+        id: 'msg-live-1',
         content: [{ type: 'text', text: '做一个模块，记录所有 track 发起的 llm 数据，计算开销' }],
         source: { kind: 'user' },
       },
@@ -141,6 +142,7 @@ describe('createAutoCapture', () => {
     const cap = store.captures[0]!
     expect(cap.content).toBe('调研 StreamChunk usage/token 字段')
     expect(cap.context).toContain('记录所有 track 发起的 llm 数据')
+    expect(cap.sourceMessageId).toBe('msg-live-1')
     dispose()
   })
 
@@ -197,8 +199,8 @@ describe('createAutoCapture', () => {
     const ctx = new Context()
     const store = makeStore()
     // Continued (spliced) session: no user/message flows through this process,
-    // so seedContext backfills from the log.
-    const seedContext = vi.fn(async () => '重启前的用户请求：做一个 llm 用量计量模块')
+    // so seedContext backfills from the log (text + message id).
+    const seedContext = vi.fn(async () => ({ text: '重启前的用户请求：做一个 llm 用量计量模块', id: 'msg-seed-9' }))
     const dispose = createAutoCapture(ctx, { store, seedContext })
 
     // Realistic splice: many events pass BEFORE the first signal — each
@@ -211,6 +213,7 @@ describe('createAutoCapture', () => {
     const cap = store.captures[0]!
     expect(cap.content).toBe('调研 StreamChunk usage/token 字段')
     expect(cap.context).toContain('llm 用量计量模块')
+    expect(cap.sourceMessageId).toBe('msg-seed-9')
     dispose()
   })
 
@@ -232,19 +235,23 @@ describe('createAutoCapture', () => {
   it('live user/message beats the seed (cache updated by the stream)', async () => {
     const ctx = new Context()
     const store = makeStore()
-    const seedContext = vi.fn(async () => '旧意图（不该被用）')
+    const seedContext = vi.fn(async () => ({ text: '旧意图（不该被用）', id: 'msg-stale-1' }))
     const dispose = createAutoCapture(ctx, { store, seedContext })
 
     // A real user request arrives AFTER the observer starts → cache is warm.
     ctx.emit('session/event', { id: 's1' }, {
       type: 'user/message',
-      data: { content: [{ type: 'text', text: '新意图：请修复侧边栏不可见的问题并补测试' }], source: { kind: 'user' } },
+      data: {
+        id: 'msg-live-2',
+        content: [{ type: 'text', text: '新意图：请修复侧边栏不可见的问题并补测试' }], source: { kind: 'user' },
+      },
     })
     emitTool(ctx, 's1', 'todo_write', { todos: [{ content: '排查 side panel' }] })
     await new Promise((r) => setTimeout(r, 10))
     expect(seedContext).not.toHaveBeenCalled() // cache already warm
     const cap = store.captures[0]!
     expect(cap.context).toContain('修复侧边栏')
+    expect(cap.sourceMessageId).toBe('msg-live-2')
     dispose()
   })
 })
