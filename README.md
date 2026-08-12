@@ -31,12 +31,24 @@ dsh web
 | 工具 | 作用 |
 |---|---|
 | `capture_thought(content, tags?)` | 把念头零摩擦收进汇集墙 |
-| `report_decision_point(question, options, my_preference, rationale, impact, need)` | AI 遇到不可逆/风险/范围/验收决策时上报，用户轻决策回答 |
+| `report_decision_point(question, options, my_preference, rationale, impact, need)` | AI 遇到不可逆/风险/范围/验收决策时上报，用户轻决策回答；自动存入决策账本 |
+| `track_respond_decision(decision_id, choice, rationale?)` | 用户回答后落盘选择与理由（幂等；`dismissed` 表示跳过） |
+| `track_list_decisions(state?, since?, session_id?)` | 查决策历史（含待确认/已回答/已跳过） |
 | `track_create_issue(title, description?, priority?, acceptance?, parent_id?)` | 创建 Linear 兼容 issue |
 | `track_list_issues(team_id?, state?)` | 列出 issue |
 | `track_sync_history(workspace?, since?, dry_run?, max_sessions?, engine?)` | 把工作区 session 历史折叠成 epic/issue 候选（默认 dry-run） |
 | `track_usage(since?)` | 报告 track 引擎发起的 LLM 调用开销：请求数、input/output/cache/reasoning token、耗时、估算成本（按模型分路由） |
 | `track_backfill_captures()` | 存量捕获 context 回填：把动机链功能（PR #20）之前产生的无 context open capture，从源 session 日志补最近用户显式请求；幂等 |
+
+## 决策账本（decision ledger）
+
+决策点是 track 里价值最高的数据之一——用户在某次取舍上的**选择与理由**。
+`report_decision_point` 上报时预分配 id 并写入 KV `decisions` 表，返回文本首行
+`Decision recorded: dec_xxx` 作为会话里的稳定指针（不写 session 自定义事件，
+遵守 20260811 起的会话日志边界约定）；用户回答后由模型调用
+`track_respond_decision` 落盘（`choice='dismissed'` 表示跳过）。查询面：
+`track_list_decisions` 工具、`GET /api/track/decisions`、面板（规划中）、
+funnel 的 `decisions.answerRate`。保留期独立于会话日志（KV 本就不随会话删除）。
 
 ## 捕获动机链（capture motivation context）
 

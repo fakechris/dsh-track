@@ -16,6 +16,7 @@ import {
   TRACK_UNIT,
   type AuditEntry,
   type Capture,
+  type Decision,
   type Epic,
   type TrackGlobal,
   type Issue,
@@ -179,6 +180,35 @@ export class TrackStore {
     return issue
   }
 
+  // ---- decisions ----
+
+  async upsertDecision(decision: Decision): Promise<void> {
+  await this.ready()
+    await this.chain('decisions', () => this.unit.putRecord('decisions', decision.id, decision))
+  }
+
+  async getDecision(id: string): Promise<Decision | undefined> {
+  await this.ready()
+    const { tables } = await this.unit.loadAll()
+    return (tables.decisions ?? {})[id] as Decision | undefined
+  }
+
+  /**
+   * List decisions, newest first. Filters are optional and composable.
+   * @param state   lifecycle filter (pending | answered | dismissed)
+   * @param since   only decisions created at/after this epoch ms
+   * @param sessionId  only decisions raised in this session
+   */
+  async listDecisions(state?: Decision['status'], since?: number, sessionId?: string): Promise<Decision[]> {
+  await this.ready()
+    const { tables } = await this.unit.loadAll()
+    let decisions = Object.values(tables.decisions ?? {}) as Decision[]
+    if (state) decisions = decisions.filter((d) => d.status === state)
+    if (sessionId) decisions = decisions.filter((d) => d.sessionId === sessionId)
+    if (since !== undefined) decisions = decisions.filter((d) => Date.parse(d.createdAt) >= since)
+    return decisions.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+  }
+
   // ---- issues ----
 
   async listIssues(teamId?: string, state?: Issue['state']): Promise<Issue[]> {
@@ -268,14 +298,15 @@ export class TrackStore {
 
   /**
    * Funnel summary over the audit trail — the observability face for the
-   * capture/issue pipeline. Answers "how many times was each tool invoked,
-   * and what is the capture conversion" directly from the store, instead of
-   * archaeology over session logs.
+   * capture/issue/decision pipeline. Answers "how many times was each tool
+   * invoked, and what is the capture conversion" directly from the store,
+   * instead of archaeology over session logs.
    */
   async funnel(): Promise<{
     tools: Record<string, { calls: number; ok: number; fail: number }>
     captures: { open: number; promoted: number }
     issues: { total: number }
+    decisions: { pending: number; answered: number; dismissed: number; answerRate: number | null }
     captureConversion: number | null
   }> {
   await this.ready()
@@ -291,11 +322,21 @@ export class TrackStore {
     const open = captures.filter((c) => c.status === 'open').length
     const promoted = captures.filter((c) => c.status === 'promoted').length
     const issues = await this.listIssues()
+    const decisions = await this.listDecisions()
+    const pending = decisions.filter((d) => d.status === 'pending').length
+    const answered = decisions.filter((d) => d.status === 'answered').length
+    const dismissed = decisions.filter((d) => d.status === 'dismissed').length
     const captureCalls = tools['capture_thought']?.calls ?? 0
     return {
       tools,
       captures: { open, promoted },
       issues: { total: issues.length },
+      decisions: {
+        pending,
+        answered,
+        dismissed,
+        answerRate: decisions.length > 0 ? Number((answered / decisions.length).toFixed(3)) : null,
+      },
       captureConversion: captureCalls > 0 ? Number((promoted / captureCalls).toFixed(3)) : null,
     }
   }

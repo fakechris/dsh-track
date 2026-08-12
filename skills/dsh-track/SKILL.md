@@ -1,6 +1,6 @@
 ---
 name: dsh-track
-description: "Track Bridge 任务管理协议。当执行中遇到不可逆/风险/范围/验收类决策、用户提到与当前工作无关的想法、或需要把工作映射为结构化任务时使用。提供决策点上报、念头捕获、issue 创建与查询的调用纪律 English: Track Bridge task-management protocol — decision-point reporting, thought capture, and issue create/query discipline; use when the user faces an irreversible/risky/scope/acceptance decision, mentions an off-topic idea, or wants work mapped to structured tasks."
+description: "Track Bridge 任务管理协议。当执行中遇到不可逆/风险/范围/验收类决策、用户提到与当前工作无关的想法、或需要把工作映射为结构化任务时使用。提供决策点上报（含回答落盘）、念头捕获、issue 创建与查询的调用纪律 English: Track Bridge task-management protocol — decision-point reporting (with answer recording), thought capture, and issue create/query discipline; use when the user faces an irreversible/risky/scope/acceptance decision, mentions an off-topic idea, or wants work mapped to structured tasks."
 license: BSD-3-Clause
 metadata:
   version: 0.1.0
@@ -36,6 +36,14 @@ metadata:
 我的倾向：<A>，因为<理由>
 影响：<选 A 意味着…>
 需要你：<确认|选择|补充>
+
+## 记录回答（必须，2026-08-12 起）
+
+- 上报后系统已把决策存进 KV（返回文本首行 `Decision recorded: dec_xxx` 是稳定指针）。
+- **用户回答后，立即调用 `track_respond_decision(decision_id, choice, rationale?)` 落盘用户的选择与理由**——
+  不落盘等于没问；这是"用户的选择和理由"从聊天文本升级为可查询数据的唯一通道。
+- 用户说"先不定了/跳过/随便"时，`choice` 传 `'dismissed'`。
+- 查历史决策：`track_list_decisions(state?, since?, session_id?)`；面板/`/api/track/decisions` 同源。
 
 ## 纪律
 

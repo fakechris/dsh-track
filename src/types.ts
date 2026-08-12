@@ -92,7 +92,7 @@ export interface Link {
   createdAt: string
 }
 
-/** Decision point: AI-raised, user-answered, recorded in both session and KV. */
+/** Decision point: AI-raised, user-answered, persisted to the KV decisions table. */
 export interface Decision {
   id: string
   /** Session where the decision point arose. */
@@ -111,9 +111,21 @@ export interface Decision {
   need: 'confirm' | 'choose' | 'supplement'
   /** Lifecycle. */
   status: 'pending' | 'answered' | 'dismissed'
-  /** User's answer. */
+  /** User's answer as stated (or 'dismissed'). Recorded via track_respond_decision. */
   answer?: string
+  /** Optional user rationale / note captured with the answer. */
+  rationale?: string
+  /** Who the answer came from — always the user; the model only relays it. */
+  answeredBy?: 'user' | 'model'
   answeredAt?: string
+  /**
+   * Motivation context: the most recent explicit user request behind this
+   * decision point (same idea as Capture.context). Optional in v1 — filled
+   * when the raising turn carries one.
+   */
+  context?: string
+  /** Id of a previous decision of the same topic that this one supersedes. */
+  supersedesDecisionId?: string
   createdAt: string
 }
 
@@ -139,8 +151,8 @@ export interface TrackGlobal {
  */
 export interface AuditEntry {
   id: string
-  /** The tool that ran: capture_thought | report_decision_point | track_create_issue | track_sync_history | track_usage | track_backfill_captures. */
-  tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history' | 'track_usage' | 'track_backfill_captures'
+  /** The tool that ran: capture_thought | report_decision_point | track_create_issue | track_sync_history | track_usage | track_backfill_captures | track_respond_decision | track_list_decisions. */
+  tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history' | 'track_usage' | 'track_backfill_captures' | 'track_respond_decision' | 'track_list_decisions'
   /** Epoch ms of the invocation. */
   ts: number
   /** Owning agent session id when available. */
