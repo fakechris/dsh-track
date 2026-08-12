@@ -24,8 +24,10 @@ import { mountRightPanel } from './right-panel.ts'
 export type { TrackStripProps } from './strip-contract.ts'
 export type { TrackKey } from './locales.ts'
 
-/** Required services: slot registration and locale dictionaries. */
-export const inject = ['slots', 'locale']
+/** Required services: slot registration, locale dictionaries, and the
+ *  sessions face (the right-panel jump-back links call ctx.sessions.open /
+ *  binding — cordis property access requires the service declared). */
+export const inject = ['slots', 'locale', 'sessions']
 
 /**
  * Client plugin body: sidebar entry + center panel + composer strip.
