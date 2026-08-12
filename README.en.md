@@ -42,7 +42,7 @@ English | [中文](README.md)
 
 ```sh
 # 1. Install the plugin (official form: published dsh; or `dsh plugin ...` if installed)
-npx --yes -p @deepseek-ai/dsh@0.0.1-rc.2 dsh plugin --profile web add github:dsh-external/dsh-track
+npx -p @deepseek-ai/dsh dsh plugin --profile web add github:dsh-external/dsh-track
 #    (or a local path: `... add /absolute/path/to/dsh-track`)
 
 # 2. Install the protocol skill (decision-point / task-advance discipline)
