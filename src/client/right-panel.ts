@@ -7,7 +7,7 @@
  *
  * This is the right-side sidebar the user asked for — not a full-screen
  * overlay (which the previous implementation wrongly did).
- * @module @fakechris/dsh-track/client/right-panel
+ * @module @deepseek-ai/dsh-track/client/right-panel
  */
 
 import { conversationContextKey } from '@deepseek-ai/dsh-client-runtime/client'

@@ -16,7 +16,7 @@ export default defineConfig({
   dts: false,
   clean: false,
   // DSH client-modules contract C6: register via __ModuleLoader__.load.
-  banner: 'window.__ModuleLoader__.load({ id: "@fakechris/dsh-track", factory: (require) => { var module = { exports: {} }; var exports = module.exports;',
+  banner: 'window.__ModuleLoader__.load({ id: "@deepseek-ai/dsh-track", factory: (require) => { var module = { exports: {} }; var exports = module.exports;',
   footer: 'return module.exports; } });',
   deps: {
     neverBundle: [

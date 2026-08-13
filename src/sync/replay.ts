@@ -6,7 +6,7 @@
  * same events arriving twice) produces no duplicates. Cursor semantics:
  * `lastSeq` per session = highest raw-log seq already folded; replay resumes
  * at lastSeq+1.
- * @module @fakechris/dsh-track/sync/replay
+ * @module @deepseek-ai/dsh-track/sync/replay
  */
 
 /** Per-session incremental cursor (v2-design §4.1 double cursor). */

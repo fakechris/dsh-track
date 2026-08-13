@@ -8,7 +8,7 @@
  * CI/deploy signals strong enough to auto-claim done (external-research Q3).
  *
  * Pure functions over Issue + EvidenceRef[] — testable without a live harness.
- * @module @fakechris/dsh-track/lifecycle/state-machine
+ * @module @deepseek-ai/dsh-track/lifecycle/state-machine
  */
 
 import type { EvidenceRef, Issue, IssueState, LifecycleSignal } from '../types.ts'

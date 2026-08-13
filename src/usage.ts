@@ -10,7 +10,7 @@
  * configuration-shaped on purpose: providers change rates, and the table is
  * one constant to edit (plus the README documents the source). Unknown
  * models report `costUsd: null` (tokens still counted) instead of guessing.
- * @module @fakechris/dsh-track/usage
+ * @module @deepseek-ai/dsh-track/usage
  */
 
 import type { LlmUsageRecord } from './types.ts'

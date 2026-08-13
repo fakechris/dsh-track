@@ -8,7 +8,7 @@
  * can override. Without an LLM, the rule pre-filter is the downgrade path.
  *
  * The golden proto's intentLayering block is the few-shot exemplar set.
- * @module @fakechris/dsh-track/sync/intent
+ * @module @deepseek-ai/dsh-track/sync/intent
  */
 
 import type { Context } from '@deepseek-ai/cordis'

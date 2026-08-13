@@ -11,4 +11,4 @@
 
 - insert:
     - id: track
-      name: '@fakechris/dsh-track'
+      name: '@deepseek-ai/dsh-track'

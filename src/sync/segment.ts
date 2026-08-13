@@ -7,7 +7,7 @@
  * reset, long idle, explicit topic markers); ambiguous boundaries are left for
  * an optional LLM judge. Rule-only output is the downgrade path when no LLM is
  * available.
- * @module @fakechris/dsh-track/sync/segment
+ * @module @deepseek-ai/dsh-track/sync/segment
  */
 
 import type { RawEvent } from './raw-event.ts'

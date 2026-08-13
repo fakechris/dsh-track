@@ -6,7 +6,7 @@
  *  - observe.ts seed (fresh process after restart: backfill per-session)
  *  - backfill (one-shot migration: fill context on legacy open captures)
  *  - index.ts seedContext wiring
- * @module @fakechris/dsh-track/capture/context
+ * @module @deepseek-ai/dsh-track/capture/context
  */
 
 /** Minimal event shape we read from a session snapshot. */

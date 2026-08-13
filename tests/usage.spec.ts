@@ -16,7 +16,7 @@ const OPTIONS = {
   provider: 'deepseek-official',
   model: 'deepseek-v4-flash',
   system: 'system',
-  messages: [{ id: 'm1', role: 'user', content: [{ type: 'text', text: 'hi' }], source: { kind: 'plugin', plugin: '@fakechris/dsh-track' } }],
+  messages: [{ id: 'm1', role: 'user', content: [{ type: 'text', text: 'hi' }], source: { kind: 'plugin', plugin: '@deepseek-ai/dsh-track' } }],
 } as never
 
 /** Fake llm service yielding a hand-built chunk stream. */

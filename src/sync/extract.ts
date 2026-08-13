@@ -5,7 +5,7 @@
  * Pure functions over `SessionEvent[]` so they are trivially testable without
  * a live session-query service. The sync pipeline (sync/run.ts) feeds these
  * with `ctx.sessionQuery.readSession` output.
- * @module @fakechris/dsh-track/sync/extract
+ * @module @deepseek-ai/dsh-track/sync/extract
  */
 
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
