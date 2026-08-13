@@ -5,7 +5,7 @@
  * calls/results + produced artifacts + turn end + outcome observations".
  * Attempts are keyed by (turn, step) and carry outcome observations so a
  * failed or interrupted attempt never masquerades as the issue's final state.
- * @module @deepseek-ai/dsh-track/sync/attempt
+ * @module @fakechris/dsh-track/sync/attempt
  */
 
 import { createHash } from 'node:crypto'

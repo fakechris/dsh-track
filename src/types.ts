@@ -3,7 +3,7 @@
  * capture/decision/link extensions. KV records keep these exact shapes so a
  * future export to a real Linear-compatible GraphQL service is a straight
  * mapping (see docs/track-bridge-plugin-plan.md).
- * @module @deepseek-ai/dsh-track/types
+ * @module @fakechris/dsh-track/types
  */
 
 /** Capture wall entry: an unstructured thought from any source. */

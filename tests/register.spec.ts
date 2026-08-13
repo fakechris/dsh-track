@@ -53,7 +53,7 @@ function makeIdPublic(kind: 'issue'): string {
 describe('plugin contract', () => {
   it('exports a cordis plugin with name and inject', async () => {
     const mod = await import('../src/index.ts')
-    expect(mod.name).toBe('@deepseek-ai/dsh-track')
+    expect(mod.name).toBe('@fakechris/dsh-track')
     expect(mod.inject).toContain('tools')
     expect(mod.inject).toContain('storage')
     expect(typeof mod.apply).toBe('function')
