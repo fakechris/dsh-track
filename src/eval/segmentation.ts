@@ -7,7 +7,7 @@
  * the same segment), then score the predicted segmentation against the golden
  * one on a common seq axis. Pk and WindowDiff are the standard boundary
  * quality metrics (Beeferman & Berger 1999; Pevzner & Hearst 2002).
- * @module @deepseek-ai/dsh-track/eval/segmentation
+ * @module @fakechris/dsh-track/eval/segmentation
  */
 
 /** One segment: a seq range plus its label (index). */

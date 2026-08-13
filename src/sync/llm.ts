@@ -20,7 +20,7 @@
  * `ctx.llm` calls — they never surface as session events). Records are
  * emitted through the injected recorder (see `setUsageRecorder`); metering is
  * fire-and-forget and must never affect the call's result.
- * @module @deepseek-ai/dsh-track/sync/llm
+ * @module @fakechris/dsh-track/sync/llm
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -107,7 +107,7 @@ export function userMessage(text: string): Message {
     id: `p2-${Math.random().toString(36).slice(2, 10)}` as Message['id'],
     role: 'user',
     content: [{ type: 'text', text }],
-    source: { kind: 'plugin', plugin: '@deepseek-ai/dsh-track' },
+    source: { kind: 'plugin', plugin: '@fakechris/dsh-track' },
   }
 }
 
@@ -117,7 +117,7 @@ export function systemMessage(text: string): Message {
     id: `p2s-${Math.random().toString(36).slice(2, 10)}` as Message['id'],
     role: 'system',
     content: [{ type: 'text', text }],
-    source: { kind: 'plugin', plugin: '@deepseek-ai/dsh-track' },
+    source: { kind: 'plugin', plugin: '@fakechris/dsh-track' },
   }
 }
 

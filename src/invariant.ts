@@ -1,5 +1,5 @@
 /**
- * Package-owned invariant companion for `@deepseek-ai/dsh-track`.
+ * Package-owned invariant companion for `@fakechris/dsh-track`.
  *
  * Follows the official plugin-template convention: the companion is a separate
  * Cordis plugin (`dsh-track-invariant`) that registers dsh-track's runtime
@@ -8,12 +8,12 @@
  * / the repo hygiene gates); a profile that composes dsh-track WITHOUT the
  * services it injects fails here with a named reason instead of silently
  * degrading at first tool call.
- * @module @deepseek-ai/dsh-track/invariant
+ * @module @fakechris/dsh-track/invariant
  */
 
 import type { Context } from '@deepseek-ai/cordis'
 
-const PACKAGE_NAME = '@deepseek-ai/dsh-track'
+const PACKAGE_NAME = '@fakechris/dsh-track'
 
 /** A package-attributed invariant failure reported by the host registry. */
 type InvariantFailure = (message: string) => never

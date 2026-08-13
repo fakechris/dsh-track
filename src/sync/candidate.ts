@@ -7,7 +7,7 @@
  * validates evidence, strips unsupported claims, lints the title, and marks
  * inferred AC as proposed. Rule-only fallback produces a plain candidate when
  * no LLM is available (downgrade path).
- * @module @deepseek-ai/dsh-track/sync/candidate
+ * @module @fakechris/dsh-track/sync/candidate
  */
 
 import type { Context } from '@deepseek-ai/cordis'

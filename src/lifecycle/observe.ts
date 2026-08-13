@@ -7,7 +7,7 @@
  * zero model cost, fire-and-forget: a failed write only logs, never breaks the
  * stream. Attachment lives in the store (issue.attachSessionId), so continued
  * (spliced) sessions keep their attachment after a restart.
- * @module @deepseek-ai/dsh-track/lifecycle/observe
+ * @module @fakechris/dsh-track/lifecycle/observe
  */
 
 import type { Context } from '@deepseek-ai/cordis'
