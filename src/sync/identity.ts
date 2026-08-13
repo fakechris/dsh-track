@@ -14,7 +14,7 @@
  *  4. merge: SAME_TASK (high confidence, no conflicts) merges into one
  *     canonical candidate; everything else stays separate with a relation
  *     note (never over-merge — v2-design §3.7).
- * @module @fakechris/dsh-track/sync/identity
+ * @module @deepseek-ai/dsh-track/sync/identity
  */
 
 import type { Context } from '@deepseek-ai/cordis'

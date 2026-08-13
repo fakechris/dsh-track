@@ -40,7 +40,7 @@ describe('dsh-track invariant companion', () => {
   it('registers the package with the host invariants registry', async () => {
     const registry = await applyCompanion()
     expect(registry.registrations).toHaveLength(1)
-    expect(registry.registrations[0]!.pkg).toBe('@fakechris/dsh-track')
+    expect(registry.registrations[0]!.pkg).toBe('@deepseek-ai/dsh-track')
     expect(name).toBe('dsh-track-invariant')
   })
 

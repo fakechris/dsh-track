@@ -8,7 +8,7 @@
  * 2. A center-column panel (capture wall + pending decisions + issues)
  *    toggled by the entry, fed by the host HTTP API (/api/track/*).
  * 3. A composer-dock strip showing pending counts.
- * @module @fakechris/dsh-track/client
+ * @module @deepseek-ai/dsh-track/client
  */
 
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'

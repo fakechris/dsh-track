@@ -30,7 +30,7 @@
  * latest full user request.
  *
  * Reentrancy: our own appends (track/* events) never match the signal.
- * @module @fakechris/dsh-track/capture/observe
+ * @module @deepseek-ai/dsh-track/capture/observe
  */
 
 import type { Context } from '@deepseek-ai/cordis'

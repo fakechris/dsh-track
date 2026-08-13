@@ -7,7 +7,7 @@
  * is dependency-injected (session-query service + store) so it is testable
  * without a live harness, and dry-run-first so write-back stays human/track
  * confirmed (the triage discipline).
- * @module @fakechris/dsh-track/sync/run
+ * @module @deepseek-ai/dsh-track/sync/run
  */
 
 import type { SessionQueryEngine } from '@deepseek-ai/dsh-session-query'

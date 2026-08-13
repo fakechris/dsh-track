@@ -5,7 +5,7 @@
  * engine): sessions whose normalized titles match form one epic (a work
  * thread); each session becomes one issue candidate under its epic. The LLM
  * refiner (P4) can later re-title, merge, or split these candidates.
- * @module @fakechris/dsh-track/sync/cluster
+ * @module @deepseek-ai/dsh-track/sync/cluster
  */
 
 import type { Epic, Issue, IssueState } from '../types.ts'

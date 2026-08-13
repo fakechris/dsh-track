@@ -1,5 +1,5 @@
 {
-  "name": "@fakechris/dsh-track",
+  "name": "@deepseek-ai/dsh-track",
   "description": "Track Bridge: embedded task-management engine for DeepSeek Harness — decision-point protocol, capture wall, and Linear-shaped issue store over session events + storage KV",
   "version": "0.2.1",
   "private": true,
@@ -55,9 +55,6 @@
     "cordis.patch.yml",
     "skills"
   ],
-  "publishConfig": {
-    "access": "public"
-  },
   "keywords": [
     "dsh",
     "deepseek-harness",
