@@ -57,5 +57,15 @@
   ],
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "dsh-bundle",
+    "task-management",
+    "track-bridge",
+    "agent",
+    "plugin"
+  ]
 }
