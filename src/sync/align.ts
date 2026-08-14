@@ -2,7 +2,7 @@
  * Alignment — reconcile clustered candidates against the existing Track store
  * so a re-run is idempotent: a session already linked to an issue updates that
  * issue instead of creating a duplicate.
- * @module @deepseek-ai/dsh-track/sync/align
+ * @module @fakechris/dsh-track/sync/align
  */
 
 import type { Capture, Issue, IssueState } from '../types.ts'

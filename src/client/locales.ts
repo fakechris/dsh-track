@@ -1,6 +1,6 @@
 /**
  * Track strip copy — locale keys and zh/en dictionaries.
- * @module @deepseek-ai/dsh-track/client/locales
+ * @module @fakechris/dsh-track/client/locales
  */
 
 // Type-only: the LocaleNamespaceMap merge target lives on ui-slots.

@@ -8,7 +8,7 @@
  *
  * Storage is host-side only: the model never touches this store directly;
  * model-facing tools registered in index.ts are the only entry points.
- * @module @deepseek-ai/dsh-track/store
+ * @module @fakechris/dsh-track/store
  */
 
 import type { KvFacet, KvUnit, KvUnitDescriptor } from '@deepseek-ai/dsh-storage'

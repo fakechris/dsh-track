@@ -6,7 +6,7 @@
  * context-less forever and C2/C3 (context-based fold) cannot map them.
  * This pass reads each open capture's source session log and writes the most
  * recent explicit user request as its context.
- * @module @deepseek-ai/dsh-track/capture/backfill
+ * @module @fakechris/dsh-track/capture/backfill
  */
 
 import type { TrackStore } from '../store.ts'
