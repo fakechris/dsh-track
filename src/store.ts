@@ -15,11 +15,13 @@ import { createHash } from 'node:crypto'
 import type { KvFacet, KvUnit, KvUnitDescriptor } from '@deepseek-ai/dsh-storage'
 import {
   TRACK_UNIT,
+  DEFAULT_TRACK_CONFIG,
   type AuditEntry,
   type Capture,
   type Decision,
   type Epic,
   type TrackGlobal,
+  type TrackConfig,
   type Issue,
   type Link,
   type LlmUsageRecord,
@@ -31,6 +33,17 @@ import { MAX_EVIDENCE, isAutoCommit, nextInferred, sweepProposal } from './lifec
  *  loop (they should be promoted, archived, or deleted). */
 export const STALE_CAPTURE_MS = 14 * 24 * 60 * 60 * 1000
 import { normalizeTitle } from './sync/cluster.ts'
+import { contentTokens } from './sync/align.ts'
+
+/** Token-overlap similarity in [0,1]: shared / smaller set, requiring ≥3 shared
+ *  tokens (never merges on incidental bigram hits). */
+export function titleSimilarity(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0
+  let shared = 0
+  for (const t of b) if (a.has(t)) shared += 1
+  if (shared < 3) return 0
+  return shared / Math.min(a.size, b.size)
+}
 
 /** Branded identifier prefixes keep record ids recognizable and collision-free. */
 export const ID_PREFIX = {
@@ -134,6 +147,25 @@ export class TrackStore {
   await this.ready()
     const g = await this.unit.loadAll().then(({ global }) => global as TrackGlobal | null)
     return g
+  }
+
+  /** Effective auto-maintenance config: stored values merged over defaults. */
+  async readConfig(): Promise<TrackConfig> {
+    const g = await this.readGlobal()
+    return { ...DEFAULT_TRACK_CONFIG, ...(g?.config ?? {}) }
+  }
+
+  /** Persist a partial config patch (missing fields keep their current value). */
+  async writeConfig(patch: Partial<TrackConfig>): Promise<TrackConfig> {
+    await this.ready()
+    const g = (await this.readGlobal()) ?? {
+      version: 1 as const,
+      teams: {},
+      identifierCounter: 0,
+    }
+    const config = { ...(g.config ?? DEFAULT_TRACK_CONFIG), ...patch }
+    await this.chain('__global', () => this.unit.setGlobal({ ...g, config }))
+    return config
   }
 
   async writeGlobal(g: TrackGlobal): Promise<void> {
@@ -452,7 +484,7 @@ export class TrackStore {
    * confirmed_by_user tool call). Writes `state` and records the confirmed
    * state as the current inference.
    */
-  async confirmIssueState(issueId: string, state: Issue['state'], by: 'user' | 'model' = 'user', now = Date.now()): Promise<Issue | undefined> {
+  async confirmIssueState(issueId: string, state: Issue['state'], by: 'user' | 'model' | 'auto' = 'user', now = Date.now()): Promise<Issue | undefined> {
   await this.ready()
     const issue = await this.getIssue(issueId)
     if (!issue) return undefined
@@ -472,6 +504,31 @@ export class TrackStore {
     }
     await this.chain('issues', () => this.unit.putRecord('issues', issue.id, updated))
     return updated
+  }
+
+  /**
+   * Auto-confirm canceled proposals past their grace period (config
+   * autoCancelPendingDays, default 14d): a canceled proposal that has stood
+   * untouched for the whole grace is garbage-collected — the user never
+   * engaged, the work is abandoned. done is NEVER auto-confirmed (the
+   * confirmation-gate principle). Audited via the state commit itself.
+   */
+  async autoConfirmPendingCanceled(now = Date.now()): Promise<{ confirmed: number }> {
+    await this.ready()
+    const cfg = await this.readConfig()
+    if (!cfg.autoCancelPendingDays) return { confirmed: 0 }
+    const graceMs = cfg.autoCancelPendingDays * 86_400_000
+    const issues = await this.listIssues()
+    let confirmed = 0
+    for (const issue of issues) {
+      const pc = issue.pendingConfirm
+      if (!pc || pc.to !== 'canceled') continue
+      if (now - pc.at > graceMs) {
+        await this.confirmIssueState(issue.id, 'canceled', 'auto', now)
+        confirmed += 1
+      }
+    }
+    return { confirmed }
   }
 
   /**
@@ -609,28 +666,43 @@ export class TrackStore {
    * mergeIntoCanonical(by='auto'). Near-duplicates (different wording) are
    * NOT touched here — they need a human call.
    */
-  async autoMergeExactDuplicates(now = Date.now()): Promise<{ groups: number; merged: number }> {
+  /**
+   * Auto-merge duplicate issues (the dedup loop): group NON-terminal issues
+   * by token similarity at or above the configured nearDupThreshold (exact
+   * titles are similarity 1.0 — one pass covers both). Each group's issues
+   * merge into the LOWEST identifier (canonical), unioning sessions; the
+   * sources are canceled with an audited pointer. Approved 2026-08-14: the
+   * user wants suspected duplicates merged automatically, not proposed —
+   * nothing is lost (canonical keeps union data) and every merge is audited.
+   */
+  async autoMergeDuplicates(now = Date.now()): Promise<{ groups: number; merged: number }> {
     await this.ready()
-    const issues = await this.listIssues()
-    const byTitle = new Map<string, Issue[]>()
-    for (const issue of issues) {
-      if (issue.state === 'done' || issue.state === 'canceled') continue
-      const key = normalizeTitle(issue.title)
-      if (!key) continue
-      const list = byTitle.get(key) ?? []
-      list.push(issue)
-      byTitle.set(key, list)
-    }
+    const cfg = await this.readConfig()
+    const issues = (await this.listIssues())
+      .filter((i) => i.state !== 'done' && i.state !== 'canceled')
+      .sort((a, b) => a.identifier.localeCompare(b.identifier, undefined, { numeric: true }))
+    const tokenized = issues.map((i) => ({ issue: i, tokens: contentTokens(i.title) }))
+    const used = new Set<string>()
     let groups = 0
     let merged = 0
-    for (const list of byTitle.values()) {
-      if (list.length < 2) continue
-      // Canonical = lowest identifier (INV-66 < INV-72); merge the rest into it.
-      const ordered = [...list].sort((a, b) => a.identifier.localeCompare(b.identifier, undefined, { numeric: true }))
-      const canonical = ordered[0]!
+    for (let i = 0; i < tokenized.length; i++) {
+      const entry = tokenized[i]!
+      if (used.has(entry.issue.id)) continue
+      const group = [entry]
+      used.add(entry.issue.id)
+      for (let j = i + 1; j < tokenized.length; j++) {
+        const other = tokenized[j]!
+        if (used.has(other.issue.id)) continue
+        if (titleSimilarity(entry.tokens, other.tokens) >= cfg.nearDupThreshold) {
+          group.push(other)
+          used.add(other.issue.id)
+        }
+      }
+      if (group.length < 2) continue
       groups += 1
-      for (const dup of ordered.slice(1)) {
-        await this.mergeIntoCanonical(dup.id, canonical.id, 'auto', now)
+      // Already identifier-sorted: group[0] is the canonical.
+      for (const dup of group.slice(1)) {
+        await this.mergeIntoCanonical(dup.issue.id, group[0]!.issue.id, 'auto', now)
         merged += 1
       }
     }

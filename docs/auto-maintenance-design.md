@@ -28,15 +28,16 @@
 5. duplicate → merged/canceled：精确同名自动归并（本轮新增）
 6. open capture → promoted：标题精确匹配已有 issue 自动促转（本轮新增）
 
-## 讨论中的可选项（未实现，等拍板）
+## 已实现的可选项（2026-08-14 第二批，用户拍板全部做）
 
-- auto-confirm canceled：pendingConfirm.canceled 悬挂 >N 天无人处理 → 自动确认取消（垃圾回收语义；与 done 必须人确认不同，canceled 自动化风险低——需用户点头才开）
-- 定时 v2 sync：配置 daily/weekly + maxSessions 上限 + 内存告警时跳过
-- 近似重复提议：sim≥0.55 的组 → 面板「疑似重复」区（而非自动归并），一键归并
-- 面板 stale capture 提示：捕获想法区标题显示待整理数
+- **配置面板**：Track 面板 ⚙ 设置区 + GET/POST /api/track/config（TrackGlobal.config，缺失字段回落默认值）
+- **auto-confirm canceled**：pendingConfirm.canceled 悬挂 > autoCancelPendingDays（**默认 14 天**，可配，0=关闭）→ 自动确认取消。done 永不自动确认
+- **定时 sync**：1h 心跳检查 syncIntervalDays（默认 7 天，0=关闭），扫 lastSync 里的 workspace，syncMaxSessions 限额（默认 10），engine 默认 v1（零 LLM 零内存风险；v2 手动按需）
+- **近似重复自动归并**：token 相似度 ≥ nearDupThreshold（默认 0.6，可配，精确同名=1.0 一套逻辑覆盖）→ 自动合并进最早 identifier；union 会话不丢数据、每并留 audit。用户明确要求自动并而非提议
 
 ## 验收（2026-08-14 落地）
 
-- 本轮 PR：mergeIntoCanonical + triageCaptures + autoMergeExactDuplicates + POST /issues/:id/merge + 维护循环接线
-- 238 tests 全过；部署后 15 个已完成 capture 已删、7 组重复 issue 归并
-- 现场效果：启动日志 `[dsh-track] capture triage: N promoted, M stale of K open` / `dup-merge: X merged into Y canonical(s)`
+- 第一批：mergeIntoCanonical + triageCaptures + 精确重复归并 + POST /issues/:id/merge
+- 第二批：配置面板 + auto-confirm canceled(14d) + 定时 sync(v1/7d/10cap) + 近似重复自动归并(0.6)
+- 240 tests 全过；15 个已完成 capture 已删、9 个重复 issue 已归并
+- 现场效果：启动日志 `[dsh-track] sweep / auto-confirm / capture triage / dup-merge / scheduled sync`

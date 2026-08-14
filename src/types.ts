@@ -231,6 +231,37 @@ export interface TrackGlobal {
    * restart (the 2026-08-13 duplicate-capture bug).
    */
   autoTodoSessions?: Record<string, string>
+  /** Runtime-tunable auto-maintenance knobs (defaults when absent). */
+  config?: TrackConfig
+}
+
+/**
+ * Auto-maintenance configuration — tunable at runtime via the panel settings
+ * (gear ⚙ in the Track panel) or POST /api/track/config. Missing fields fall
+ * back to DEFAULT_TRACK_CONFIG, so a partial write is safe.
+ */
+export interface TrackConfig {
+  /** Days a canceled proposal may sit in pendingConfirm before auto-confirm
+   *  (garbage collection for abandoned work; 0 = never auto-confirm). */
+  autoCancelPendingDays: number
+  /** Days between scheduled sync passes over the lastSync workspaces
+   *  (0 = disabled). LLM-engine (v2) runs are memory/cost heavy — default v1. */
+  syncIntervalDays: number
+  /** Session cap per workspace per scheduled sync (memory guard). */
+  syncMaxSessions: number
+  /** Scheduled-sync engine: 'v1' (deterministic, zero LLM) or 'v2' (LLM). */
+  syncEngine: 'v1' | 'v2'
+  /** Token-similarity threshold for AUTO near-duplicate merge (0..1). */
+  nearDupThreshold: number
+}
+
+/** Defaults: 14d auto-cancel grace (“至少两周”), weekly v1 sync capped at 10. */
+export const DEFAULT_TRACK_CONFIG: TrackConfig = {
+  autoCancelPendingDays: 14,
+  syncIntervalDays: 7,
+  syncMaxSessions: 10,
+  syncEngine: 'v1',
+  nearDupThreshold: 0.6,
 }
 
 /**
