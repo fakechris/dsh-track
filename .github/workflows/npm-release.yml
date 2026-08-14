@@ -1,0 +1,57 @@
+name: npm release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to create and publish (default: v<package.json version>)'
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node 22 (npm registry auth)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+
+      # Tag from package.json when dispatched manually (creates the v-tag, then
+      # the push-tag trigger re-runs this workflow for the actual publish — the
+      # guard below makes that second run a no-op when the version already exists).
+      - name: Create tag (workflow_dispatch only)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG=${TAG_INPUT:-v$VERSION}
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "tag $TAG already exists — skipping tag creation"
+          else
+            git config user.name 'github-actions[bot]'
+            git config user.email 'github-actions[bot]@users.noreply.github.com'
+            git tag "$TAG"
+            git push origin "$TAG"
+          fi
+        env:
+          TAG_INPUT: ${{ github.event.inputs.tag }}
+
+      # lib/ is committed (the DSH toolchain used to build it is local-only), so
+      # the workflow publishes the checked-in artifact without re-building.
+      - name: Publish to npm
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "$(node -p "require('./package.json').name")@$VERSION" version >/dev/null 2>&1; then
+            echo "$VERSION already published — nothing to do"
+          else
+            npm publish --ignore-scripts --access public
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
