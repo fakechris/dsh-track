@@ -8,7 +8,7 @@
  * correct authority role so downstream stages never re-derive it ad hoc.
  *
  * Pure functions over `SessionEvent[]` — testable without a live service.
- * @module @deepseek-ai/dsh-track/sync/raw-event
+ * @module @fakechris/dsh-track/sync/raw-event
  */
 
 import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'

@@ -9,7 +9,7 @@
  * skill (skills/dsh-track/SKILL.md) instructs the model to call.
  *
  * Registrations are effects: unloading the plugin disposes tools and store.
- * @module @deepseek-ai/dsh-track
+ * @module @fakechris/dsh-track
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -30,7 +30,7 @@ import { createLifecycleObserver } from './lifecycle/observe.ts'
 import { evidenceWeight, describeEvidence } from './lifecycle/state-machine.ts'
 import type { SyncOptions, SyncReport, SyncDeps as SyncReportDeps } from './sync/run.ts'
 
-export const name = '@deepseek-ai/dsh-track'
+export const name = '@fakechris/dsh-track'
 export const inject = ['tools', 'storage']
 
 /** Track Bridge plugin configuration. */
