@@ -10,7 +10,12 @@ English | [中文](README.md)
 > tasks have a lifecycle. Everything lives inside the harness (session events + storage KV), zero
 > external dependencies.
 
-**Status** Active · **Tests** 240 passing · **Build** `pnpm run build` · **Version** 0.4.0
+**Status** Active · **Tests** 240 passing · **Build** `pnpm run build` · **Version** 0.5.0
+> **v0.5.0 · panel task actions + pager (2026-08-14)**: issue cards gain direct
+> 完成/取消 (done/canceled) actions with two-step confirm, plus a batch mode
+> (checkboxes + batch done/cancel); pagers gain first-page / page-number jump /
+> last-page controls and scroll anchoring (the pager stays put across page
+> switches instead of jumping).
 > **v0.4.0 · auto-maintenance + config panel (2026-08-14)**: a lifecycle sweep surfaces zombie
 > tasks in a pending-confirmation section; capture auto-promotion + near-duplicate auto-merge
 > (configurable similarity threshold); canceled proposals auto-confirm past a grace period;
