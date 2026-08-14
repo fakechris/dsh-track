@@ -11,8 +11,8 @@
 **状态** Active · **测试** 240 passing · **构建** `pnpm run build` · **版本** 0.4.0
 > **v0.4.0 · 自动维护机制 + 配置面板（2026-08-14）**：生命周期 sweep 让僵尸任务浮出「待确认」区；
 > capture 自动促转 + 近似重复自动归并（token 相似度阈值可配）；canceled 提议超宽限期自动确认；
-> 定时 sync（周级 v1 限额）；Track 面板 ⚙ 配置面板（/api/track/config）。npm 发布走 GitHub
-> Actions（tag → 自动 publish），lib 产物入库。
+> 定时 sync（周级 v1 限额）；Track 面板 ⚙ 配置面板（/api/track/config）。lib 产物入库；
+> npm 发布走本地（IP 信任 + 硬件 2FA），GitHub Actions 做 tag 验证与打包产物。
 > **v0.3.0 · 去重 + 面板修复（2026-08-14）**：捕获墙不再出现重复条目——`createCapture`
 > 统一闸门（持久化 per-session 标记 + 内容哈希兜底，重启后不重捕）；右侧面板/页签修复（正式版 UI
 > 布局下挂载到真实会话根，Track 页签可开合）；底部 strip 显示真实捕获数并可点击打开面板。

@@ -15,7 +15,8 @@ English | [中文](README.md)
 > tasks in a pending-confirmation section; capture auto-promotion + near-duplicate auto-merge
 > (configurable similarity threshold); canceled proposals auto-confirm past a grace period;
 > scheduled sync (weekly v1, capped); a Track-panel settings UI (⚙) backed by /api/track/config.
-> npm releases flow through GitHub Actions (tag → auto publish); lib artifacts are committed.
+> lib artifacts are committed; npm publishing runs LOCALLY (IP trust + hardware 2FA) —
+> GitHub Actions validates the tag and packs the tarball.
 > **v0.3.0 · dedup + panel fixes (2026-08-14)**: no more duplicate entries on the capture wall —
 > `createCapture` is the single gate (durable per-session marker + content-hash fallback, survives
 > restarts); the right panel/tab are fixed (mounted on the real conversation root in the formal-release
