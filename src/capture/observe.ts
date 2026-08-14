@@ -88,7 +88,8 @@ export function createAutoCapture(ctx: Context, deps: {
   recentUser?: Map<string, UserPromptRef>
 }, options: AutoCaptureOptions = {}): () => void {
   const tag = options.tag ?? DEFAULT_TAG
-  /** sessionId → captured (todo_write dedup: first change of first entry per session). */
+  /** sessionId → captured (in-process fast path; the durable marker in the
+   *  store is authoritative across restarts — see store.createCapture). */
   const todoSeen = new Set<string>()
   /** sessionId → most recent FULL user instruction (motivation context, A). */
   const lastUserRequest = deps.recentUser ?? new Map<string, UserPromptRef>()
@@ -110,7 +111,11 @@ export function createAutoCapture(ctx: Context, deps: {
   }
 
   const capture = (sessionId: string | undefined, content: string, tags: string[], prompt?: UserPromptRef): void => {
-    void deps.store.upsertCapture({
+    // createCapture runs the dedup gate: the durable per-session marker
+    // (one todo-capture per session, survives restarts) + the content-hash
+    // fallback (an identical open capture never lands twice). The in-memory
+    // todoSeen set above stays as the fast path within one process.
+    void deps.store.createCapture({
       id: makeId('capture'),
       content,
       source: 'session',
@@ -120,7 +125,7 @@ export function createAutoCapture(ctx: Context, deps: {
       tags,
       context: prompt?.text,
       createdAt: new Date().toISOString(),
-    }).catch(() => { /* capture is best-effort; never break the stream */ })
+    }, { dedupeBySession: true }).catch(() => { /* capture is best-effort; never break the stream */ })
   }
 
   const onEvent = (session: unknown, event: { type: string; data?: unknown }): void => {

@@ -51,6 +51,10 @@ export async function createPluginHarness(config: Config = {}): Promise<TrackHar
     store,
     dir,
     async dispose(): Promise<void> {
+      // Close the store so the next harness reopens a fresh unit on its own
+      // temp dir (the module-level store singleton would otherwise keep the
+      // first unit and cross-contaminate test cases).
+      await store.close().catch(() => {})
       // cordis 4.x contexts have no public dispose on the ctx object; the
       // temp dir is the only owned resource — clean it and let vitest's
       // process teardown reclaim the rest.
