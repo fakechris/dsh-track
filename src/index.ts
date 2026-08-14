@@ -19,7 +19,7 @@ import type { KvFacet } from '@deepseek-ai/dsh-storage'
 // Type-only: pulls the ctx.webServer Context merge from dsh-host-webserver.
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { TrackStore, makeId } from './store.ts'
-import type { Capture, Decision, EvidenceRef, Issue, IssueState, LlmUsageRecord } from './types.ts'
+import type { Capture, Decision, EvidenceRef, Issue, IssueState, LlmUsageRecord, TrackConfig } from './types.ts'
 import { runSync } from './sync/run.ts'
 import { createAutoCapture, type CaptureSignalsConfig } from './capture/observe.ts'
 import { backfillCaptureContext } from './capture/backfill.ts'
@@ -138,6 +138,7 @@ export function apply(ctx: Context, config?: Config) {
 
   // Open the KV unit once a kv-capable backend lands (see resolveKv).
   let sweepTimer: ReturnType<typeof setInterval> | undefined
+  let syncTicker: ReturnType<typeof setInterval> | undefined
   ctx.effect(async () => {
     try {
       const kv = await resolveKv(ctx)
@@ -150,14 +151,12 @@ export function apply(ctx: Context, config?: Config) {
       // Wire the lifecycle evidence observer (Part B): converts the structured
       // tool stream into evidence for the attached issue of each session.
       lifecycle = createLifecycleObserver(ctx, { store })
-      // Auto-maintenance loop (every SWEEP_INTERVAL_MS): three deterministic
-      // passes — (1) lifecycle sweep: re-evaluate EVERY in_progress issue and
-      // persist done/canceled/review proposals as pendingConfirm (confirmation
-      // stays user-gated); (2) capture triage: auto-promote open captures that
-      // ARE an existing issue's exact title (zero LLM); (3) exact-title dup
-      // merge: mechanically cancel duplicate issues into their canonical.
-      // All passes are deterministic and cheap — the LLM-heavy v2 sync stays
-      // manual/on-demand (memory + cost), see docs/auto-maintenance-design.md.
+      // Auto-maintenance loop (every SWEEP_INTERVAL_MS): five deterministic
+      // passes — (1) lifecycle sweep (done/canceled/review proposals); (2)
+      // auto-confirm canceled past the config grace (default 14d); (3) capture
+      // triage (auto-promote title-matched captures, count stale); (4) near-dup
+      // auto-merge (token similarity ≥ config threshold); (5) scheduled sync
+      // (separate ticker, config interval/cap/engine — see below). Zero LLM.
       const runSweep = (): void => {
         void ensureStoreOpen()
           .then(async () => {
@@ -165,11 +164,15 @@ export function apply(ctx: Context, config?: Config) {
             if (s.proposed > 0) {
               console.log(`[dsh-track] sweep: ${s.proposed}/${s.evaluated} in_progress → pending confirmation`)
             }
+            const ac = await store.autoConfirmPendingCanceled()
+            if (ac.confirmed > 0) {
+              console.log(`[dsh-track] auto-confirm: ${ac.confirmed} abandoned issue(s) canceled`)
+            }
             const c = await store.triageCaptures()
             if (c.promoted > 0 || c.stale > 0) {
               console.log(`[dsh-track] capture triage: ${c.promoted} promoted, ${c.stale} stale of ${c.open} open`)
             }
-            const m = await store.autoMergeExactDuplicates()
+            const m = await store.autoMergeDuplicates()
             if (m.merged > 0) {
               console.log(`[dsh-track] dup-merge: ${m.merged} issues merged into ${m.groups} canonical(s)`)
             }
@@ -178,12 +181,43 @@ export function apply(ctx: Context, config?: Config) {
       }
       runSweep() // first pass right after boot so existing zombies surface
       sweepTimer = setInterval(runSweep, SWEEP_INTERVAL_MS)
+      // Scheduled sync ticker: a 1h heartbeat checks the config interval
+      // (default 7d) and last-run time, so a config change takes effect within
+      // an hour without a restart. Scans ONLY the workspaces that were synced
+      // before (lastSync keys — the incremental cursor keeps it idempotent),
+      // bounded by syncMaxSessions (memory guard: the v2 LLM passes previously
+      // killed the web under this machine's swap pressure).
+      let lastAutoSync = Date.now()
+      const runScheduledSync = async (): Promise<void> => {
+        const cfg = await store.readConfig()
+        if (!cfg.syncIntervalDays) return
+        if (Date.now() - lastAutoSync < cfg.syncIntervalDays * 86_400_000) return
+        const sessionQuery = getSessionQuery(ctx)
+        if (!sessionQuery) return
+        const global = await store.readGlobal()
+        const workspaces = Object.keys(global?.lastSync ?? {})
+        if (workspaces.length === 0) return
+        lastAutoSync = Date.now()
+        for (const ws of workspaces) {
+          try {
+            const report = await runSync(
+              { sessionQuery: sessionQuery as SyncReportDeps['sessionQuery'], store, ctx },
+              { cwd: ws, dryRun: false, maxSessions: cfg.syncMaxSessions, engine: cfg.syncEngine },
+            )
+            console.log(`[dsh-track] scheduled sync ${ws}: ${report.created} create / ${report.updated} update / ${report.promotedCaptures} promoted`)
+          } catch (e) {
+            console.error(`[dsh-track] scheduled sync ${ws} failed:`, e)
+          }
+        }
+      }
+      syncTicker = setInterval(() => void runScheduledSync().catch((e) => console.error('[dsh-track] sync ticker failed:', e)), 3600_000)
     } catch (e) {
       console.error('[dsh-track] store open failed:', e)
       throw e
     }
     return () => {
       if (sweepTimer !== undefined) clearInterval(sweepTimer)
+      if (syncTicker !== undefined) clearInterval(syncTicker)
       lifecycle?.dispose()
       store.close()
     }
@@ -843,6 +877,30 @@ export function apply(ctx: Context, config?: Config) {
         json(res, { error: `invalid state: ${state}` }, 400); return
       }
       json(res, { decisions: await store.listDecisions(state ?? undefined, since, sessionId ?? undefined) })
+    })
+    // GET /api/track/config — effective auto-maintenance config; POST with a
+    // partial body persists a patch (missing fields keep their current value).
+    registerRoute('/config', async (req, res) => {
+      await ensureStoreOpen()
+      if (req.method === 'GET') { json(res, { config: await store.readConfig() }); return }
+      if (req.method === 'POST') {
+        const body = await readBody(req)
+        const patch: Partial<TrackConfig> = {}
+        const num = (k: string): number | undefined => typeof body[k] === 'number' && Number.isFinite(body[k]) ? body[k] as number : undefined
+        const d = num('autoCancelPendingDays')
+        const i = num('syncIntervalDays')
+        const m = num('syncMaxSessions')
+        const t = num('nearDupThreshold')
+        if (d !== undefined && d >= 0) patch.autoCancelPendingDays = d
+        if (i !== undefined && i >= 0) patch.syncIntervalDays = i
+        if (m !== undefined && m >= 1) patch.syncMaxSessions = m
+        if (t !== undefined && t >= 0 && t <= 1) patch.nearDupThreshold = t
+        if (body.syncEngine === 'v1' || body.syncEngine === 'v2') patch.syncEngine = body.syncEngine
+        if (Object.keys(patch).length === 0) { json(res, { error: 'no valid config fields' }, 400); return }
+        const config = await store.writeConfig(patch)
+        json(res, { ok: true, config }); return
+      }
+      json(res, { error: 'method not allowed' }, 405)
     })
 
     // ---- action routes (prefix kind: exact wins for the base path, so

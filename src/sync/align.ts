@@ -219,7 +219,7 @@ function overlap(a: string, b: string, containmentThreshold: number): boolean {
 }
 
 /** Normalize content into comparable tokens: CJK bigrams + latin words. */
-function contentTokens(text: string): Set<string> {
+export function contentTokens(text: string): Set<string> {
   const tokens = new Set<string>()
   const lower = text.toLowerCase()
   for (const word of lower.match(/[a-z][a-z0-9-]*/g) ?? []) {

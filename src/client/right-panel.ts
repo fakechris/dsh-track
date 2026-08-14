@@ -199,9 +199,24 @@ function buildPanelHtml(): string {
   <div class="inv-head">
     <span class="inv-title">Track</span>
     <button class="inv-refresh" title="刷新">⟳</button>
+    <button class="inv-settings" title="设置">⚙</button>
     <button class="inv-close" title="收起">×</button>
   </div>
   <div class="inv-body">
+    <div class="inv-settings-panel" hidden>
+      <div class="inv-section-title">自动维护设置</div>
+      <label class="inv-set-row">取消确认宽限（天，0=不自动取消）
+        <input class="inv-set" data-set="autoCancelPendingDays" type="number" min="0" step="1"/></label>
+      <label class="inv-set-row">定时 sync 间隔（天，0=关闭）
+        <input class="inv-set" data-set="syncIntervalDays" type="number" min="0" step="1"/></label>
+      <label class="inv-set-row">每次 sync 会话上限
+        <input class="inv-set" data-set="syncMaxSessions" type="number" min="1" step="1"/></label>
+      <label class="inv-set-row">sync 引擎
+        <select class="inv-set" data-set="syncEngine"><option value="v1">v1（零 LLM）</option><option value="v2">v2（LLM）</option></select></label>
+      <label class="inv-set-row">重复归并相似度阈值（0-1）
+        <input class="inv-set" data-set="nearDupThreshold" type="number" min="0" max="1" step="0.05"/></label>
+      <div class="inv-actions"><button class="inv-act inv-save-config">保存</button></div>
+    </div>
     <div class="inv-section">
       <div class="inv-section-title">捕获想法</div>
       <div class="inv-input-row">
@@ -284,6 +299,25 @@ const PANEL_CSS = `
   flex: none;
 }
 #${PANEL_ID} .inv-title { flex: 1; font-weight: 600; }
+#${PANEL_ID} .inv-settings {
+  width: 24px; height: 24px; border: 0; border-radius: 6px;
+  background: transparent; color: var(--dsw-alias-label-secondary, #555);
+  font-size: 14px; cursor: pointer;
+}
+#${PANEL_ID} .inv-settings-panel {
+  display: flex; flex-direction: column; gap: 6px; padding: 8px 10px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(0,0,0,.12)); border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-1, rgba(0,0,0,.02));
+}
+#${PANEL_ID} .inv-settings-panel[hidden] { display: none; }
+#${PANEL_ID} .inv-set-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-size: 11.5px; opacity: .85;
+}
+#${PANEL_ID} .inv-set {
+  width: 90px; padding: 3px 6px; border: 1px solid var(--dsw-alias-border-l2, rgba(0,0,0,.15));
+  border-radius: 5px; background: transparent; color: inherit; font-size: 12px;
+}
 #${PANEL_ID} .inv-refresh, #${PANEL_ID} .inv-close {
   width: 24px; height: 24px; border: 0; border-radius: 6px;
   background: transparent; color: var(--dsw-alias-label-secondary, #555);
@@ -865,6 +899,38 @@ export function mountRightPanel(ctx: ClientContext): () => void {
   // ---- panel events ----
   panel.querySelector('.inv-close')?.addEventListener('click', () => setPanelOpen(false))
   panel.querySelector('.inv-refresh')?.addEventListener('click', refresh)
+  // Settings: gear toggles the form; form loads the effective config and
+  // POSTs a patch on save (missing fields keep their current value).
+  const settingsPanel = panel.querySelector<HTMLElement>('.inv-settings-panel')
+  const loadConfig = (cfg: Record<string, unknown>): void => {
+    settingsPanel?.querySelectorAll<HTMLInputElement | HTMLSelectElement>('.inv-set').forEach((el) => {
+      const key = el.dataset.set
+      if (key && cfg[key] !== undefined) el.value = String(cfg[key])
+    })
+  }
+  panel.querySelector('.inv-settings')?.addEventListener('click', () => {
+    if (settingsPanel === null) return
+    settingsPanel.hidden = !settingsPanel.hidden
+    if (!settingsPanel.hidden) {
+      void fetch('/api/track/config').then((r) => r.json()).then((d) => loadConfig(d.config ?? {}))
+    }
+  })
+  panel.querySelector('.inv-save-config')?.addEventListener('click', () => {
+    const patch: Record<string, unknown> = {}
+    settingsPanel?.querySelectorAll<HTMLInputElement | HTMLSelectElement>('.inv-set').forEach((el) => {
+      const key = el.dataset.set
+      if (!key) return
+      const v = el.type === 'number' ? Number(el.value) : el.value
+      if (el.type === 'number' ? Number.isFinite(v as number) : v !== '') patch[key] = v
+    })
+    void fetch('/api/track/config', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(patch),
+    }).then((r) => r.json()).then((d) => {
+      if (d.ok && d.config) loadConfig(d.config)
+    })
+  })
   const captureBtn = panel.querySelector<HTMLElement>('.inv-capture')
   const inputEl = panel.querySelector<HTMLInputElement>('.inv-input')
   const doCapture = (): void => {

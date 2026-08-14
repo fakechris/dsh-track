@@ -341,18 +341,47 @@ describe('lifecycle store integration (real json backend)', () => {
     expect(cap?.promotedToIssueId).toBe('track_issue_tg')
   })
 
-  it('autoMergeExactDuplicates merges same-title issues into the lowest identifier', async () => {
-    await trackStore.upsertIssue(makeIssue({ id: 'track_issue_d1', identifier: 'INV-210', state: 'todo', title: '重复任务' }))
-    await trackStore.upsertIssue(makeIssue({ id: 'track_issue_d2', identifier: 'INV-211', state: 'in_progress', title: '重复任务', linkedSessionIds: ['s-x'] }))
-    await trackStore.upsertIssue(makeIssue({ id: 'track_issue_d3', identifier: 'INV-212', state: 'todo', title: '重复任务' }))
+  it('autoMergeDuplicates merges same-title AND near-title issues into the lowest identifier', async () => {
+    await trackStore.upsertIssue(makeIssue({ id: 'track_issue_d1', identifier: 'INV-210', state: 'todo', title: '重复任务甲' }))
+    await trackStore.upsertIssue(makeIssue({ id: 'track_issue_d2', identifier: 'INV-211', state: 'in_progress', title: '重复任务甲', linkedSessionIds: ['s-x'] }))
+    await trackStore.upsertIssue(makeIssue({ id: 'track_issue_d3', identifier: 'INV-212', state: 'todo', title: '重复任务甲（复本）' }))
     // Give OUR group a unique title: the harness's shared store accumulates
     // same-default-title issues ('lifecycle'), so exact counts are not stable
     // — assert on our three issues only.
-    const r = await trackStore.autoMergeExactDuplicates()
+    const r = await trackStore.autoMergeDuplicates()
     expect(r.merged).toBeGreaterThanOrEqual(2)
     const canon = await trackStore.getIssue('track_issue_d1')
     expect(canon?.linkedSessionIds).toContain('s-x')
     expect((await trackStore.getIssue('track_issue_d2'))?.state).toBe('canceled')
     expect((await trackStore.getIssue('track_issue_d3'))?.state).toBe('canceled')
+  })
+
+  it('autoConfirmPendingCanceled confirms canceled proposals past the grace (default 14d)', async () => {
+    const now = Date.now()
+    await trackStore.upsertIssue(makeIssue({
+      id: 'track_issue_ac1', identifier: 'INV-220', state: 'in_progress',
+      pendingConfirm: { to: 'canceled', reason: 'no progress for 15d', at: now - 15 * 86400_000 },
+    }))
+    await trackStore.upsertIssue(makeIssue({
+      id: 'track_issue_ac2', identifier: 'INV-221', state: 'in_progress',
+      pendingConfirm: { to: 'canceled', reason: 'no progress for 15d', at: now - 3 * 86400_000 },
+    }))
+    const r = await trackStore.autoConfirmPendingCanceled(now)
+    expect(r.confirmed).toBe(1)
+    expect((await trackStore.getIssue('track_issue_ac1'))?.state).toBe('canceled')
+    expect((await trackStore.getIssue('track_issue_ac1'))?.pendingConfirm).toBeUndefined()
+    expect((await trackStore.getIssue('track_issue_ac2'))?.state).toBe('in_progress') // still in grace
+  })
+
+  it('readConfig/writeConfig merge over defaults and persist', async () => {
+    const def = await trackStore.readConfig()
+    expect(def.autoCancelPendingDays).toBe(14)
+    const cfg = await trackStore.writeConfig({ autoCancelPendingDays: 21, nearDupThreshold: 0.7 })
+    expect(cfg.autoCancelPendingDays).toBe(21)
+    expect(cfg.nearDupThreshold).toBe(0.7)
+    expect(cfg.syncIntervalDays).toBe(7) // untouched field keeps default
+    const reread = await trackStore.readConfig()
+    expect(reread.autoCancelPendingDays).toBe(21)
+    await trackStore.writeConfig({ autoCancelPendingDays: 14 }) // restore
   })
 })
