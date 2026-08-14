@@ -191,11 +191,15 @@ export function captureOverlaps(capture: Capture, candidate: IssueCandidate): bo
   const contentHit = overlap(capture.content, `${candidate.title} ${candidate.description}`, 0.5)
   if (contentHit) return true
   // Context surface (C2): the capture's context is the user's explicit
-  // request — a strong signal. Two shared tokens with the candidate suffices
-  // without the containment bar (context is verbatim user intent, not a
-  // paraphrase whose density varies).
+  // request — a strong signal, so a LOWER containment bar than the content
+  // rule is right (context is verbatim user intent, not a paraphrase whose
+  // density varies). But the bar must NOT be zero: long contexts share
+  // generic bigrams (e.g. “分析”, “dsh”) with many unrelated candidates, and a
+  // 2-token/no-containment match promoted one capture to 15+ issues in the
+  // 2026-08-14 explorer sync dry-run. 0.25 containment keeps verbatim-request
+  // matches while dropping incidental-token hits.
   if (capture.context) {
-    return overlap(capture.context, `${candidate.title} ${candidate.description}`, 0)
+    return overlap(capture.context, `${candidate.title} ${candidate.description}`, 0.25)
   }
   return false
 }

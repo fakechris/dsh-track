@@ -103,6 +103,19 @@ describe('captureOverlaps', () => {
     })
     expect(captureOverlaps(cap, cand('s1', '修复侧边栏不可见问题'))).toBe(false)
   })
+
+  it('long generic contexts do not match incidental candidates (C2 containment)', () => {
+    // Real 2026-08-14 case: capture 2d394b (context = a long user request
+    // about dsh internals) was promoted to 15+ unrelated issues because the
+    // old C2 rule matched on 2 incidental shared tokens with no containment.
+    const cap = capture('c1', '探索 dsh 仓库整体结构与入口', {
+      context: '研究一下 dsh 代码，深入分析，尤其是 context 组装、memory 管理、compact 和 toolcall 的实现',
+    })
+    // 'dsh' + '分析' are the only shared tokens; containment ~0.17 < 0.25.
+    expect(captureOverlaps(cap, cand('s1', '分析 ~/.dsh/source/web.log 中 node: not found 是否为当前问题'))).toBe(false)
+    // The verbatim request match keeps working (containment well above 0.25).
+    expect(captureOverlaps(cap, cand('s2', '研究 dsh 仓库整体结构与入口，深入分析 context 组装'))).toBe(true)
+  })
 })
 
 describe('alignCandidates with captures', () => {
@@ -246,6 +259,42 @@ describe('runSync write-back promotes captures', () => {
     expect(report.promotedCaptures).toBe(1)
     expect(promoted).toHaveLength(1)
     expect(promoted[0]!.status).toBe('promoted')
+    expect(promoted[0]!.promotedToIssueId).toBe((created[0] as { id: string }).id)
+  })
+
+  it('promotes a capture at most once even when several candidates match it', async () => {
+    const promoted: Capture[] = []
+    const created: unknown[] = []
+    const store = {
+      readGlobal: async () => null,
+      listIssues: async () => [],
+      listEpics: async () => [],
+      listCaptures: async () => [capture('cap1', '调研跨会话长期记忆方案')],
+      nextIdentifier: async () => 'INV-1',
+      upsertIssue: async (i: unknown) => { created.push(i) },
+      upsertEpic: async () => {},
+      upsertCapture: async (c: Capture) => { promoted.push(c) },
+      writeGlobal: async () => {},
+    }
+    const deps = {
+      sessionQuery: {
+        filterSessions: async () => [
+          { header: header('s1'), live: true, persisted: true },
+          { header: header('s2'), live: true, persisted: true },
+        ],
+        readSession: async (id: string) => ({
+          session: header(id),
+          events: [userMsg(0, '跨会话长期记忆方案调研', 5000)],
+        }),
+        readTitle: async () => undefined,
+      },
+      store,
+    }
+    const report = await runSync(deps as never, { cwd: '/ws', since: 0, dryRun: false })
+    expect(report.created).toBe(2) // two sessions, two candidates, both match cap1
+    expect(report.promotedCaptures).toBe(1)
+    expect(promoted).toHaveLength(1)
+    // The capture links to the FIRST issue it matched (promote-once).
     expect(promoted[0]!.promotedToIssueId).toBe((created[0] as { id: string }).id)
   })
 
