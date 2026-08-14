@@ -244,6 +244,30 @@ export class TrackStore {
     })
   }
 
+  /** Has this session's first long REQUIREMENT already been captured (durable)? */
+  async isSessionRequirementCaptured(sessionId: string): Promise<boolean> {
+  await this.ready()
+    const g = await this.readGlobal()
+    return g?.autoRequirementSessions?.[sessionId] !== undefined
+  }
+
+  /** Persist the per-session requirement-capture marker (idempotent). */
+  async markSessionRequirementCaptured(sessionId: string): Promise<void> {
+  await this.ready()
+    const g = (await this.readGlobal()) ?? {
+      version: 1 as const,
+      teams: {},
+      identifierCounter: 0,
+    }
+    await this.writeGlobal({
+      ...g,
+      autoRequirementSessions: {
+        ...(g.autoRequirementSessions ?? {}),
+        [sessionId]: new Date().toISOString(),
+      },
+    })
+  }
+
   /**
    * Dedup-aware capture creation — the single gate every capture path
    * (auto-observer, capture_thought, HTTP panel) goes through.
@@ -257,8 +281,14 @@ export class TrackStore {
    * A duplicate returns `{ status: 'duplicate' }` and inserts nothing, so
    * callers can surface the existing capture instead of a silent drop.
    */
-  async createCapture(capture: Capture, opts: { dedupeBySession?: boolean } = {}): Promise<CaptureCreateResult> {
+  async createCapture(capture: Capture, opts: { dedupeBySession?: boolean; dedupeRequirementBySession?: boolean } = {}): Promise<CaptureCreateResult> {
   await this.ready()
+    if (opts.dedupeRequirementBySession && capture.sourceSessionId !== undefined) {
+      if (await this.isSessionRequirementCaptured(capture.sourceSessionId)) {
+        return { status: 'duplicate' }
+      }
+      await this.markSessionRequirementCaptured(capture.sourceSessionId)
+    }
     if (opts.dedupeBySession && capture.sourceSessionId !== undefined) {
       // Durable marker hit, OR the session already has a todo-derived capture
       // (pre-fix sessions have no marker — backfill it so the next restart

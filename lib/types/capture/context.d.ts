@@ -38,5 +38,15 @@ export interface UserPromptRef {
 /** Is this request a terse acknowledgement rather than a full instruction? */
 export declare function isShortAck(text: string): boolean;
 export declare function latestUserRequestFromEvents(events: readonly ContextEvent[]): UserPromptRef | undefined;
+/**
+ * Deterministic title-ification for auto-capture content — every capture path
+ * (todo / goal / delegate / requirement) stores a CLEAN one-liner so the wall
+ * reads consistently (2026-08-14: requirement captures stored the user's raw
+ * multi-line message while todo/goal stored agent-phrased one-liners — the
+ * user flagged the inconsistency). Rules: strip leading list markers ("1 ",
+ * "- ", "1."), collapse whitespace/newlines, cap the length. The FULL raw
+ * text is preserved in the capture's `context` (motivation), never lost.
+ */
+export declare function titleifyCapture(text: string, maxLen?: number): string;
 /** Read the latest explicit user request for a session (best-effort). */
 export declare function latestUserRequest(sessionQuery: ContextSessionQuery | undefined, sessionId: string): Promise<UserPromptRef | undefined>;
