@@ -314,6 +314,11 @@ export async function runSync(deps: SyncDeps, options: SyncOptions): Promise<Syn
   let created = 0
   let updated = 0
   let promotedCaptures = 0
+  // One capture is promoted at most ONCE per run: the align pass may match
+  // the same open capture to several candidates (shared context, C2/C3), and
+  // each create action would otherwise overwrite `promotedToIssueId` — the
+  // capture ends up dangling on the LAST issue instead of its first match.
+  const promotedThisRun = new Set<string>()
   for (const action of aligned.actions) {
     if (action.kind === 'create') {
       const issue: Issue = {
@@ -338,6 +343,8 @@ export async function runSync(deps: SyncDeps, options: SyncOptions): Promise<Syn
       // same-context captures, so promote all of them (no orphans).
       const promoteIds = action.promoteCaptureIds ?? (action.promoteCaptureId ? [action.promoteCaptureId] : [])
       for (const captureId of promoteIds) {
+        if (promotedThisRun.has(captureId)) continue
+        promotedThisRun.add(captureId)
         const capture = captures.find((c) => c.id === captureId)
         if (capture) {
           await store.upsertCapture({ ...capture, status: 'promoted', promotedToIssueId: issue.id })
