@@ -26,6 +26,10 @@ import {
   type EvidenceRef,
 } from './types.ts'
 import { MAX_EVIDENCE, isAutoCommit, nextInferred, sweepProposal } from './lifecycle/state-machine.ts'
+
+/** Open captures older than this are reported as stale by the auto-maintenance
+ *  loop (they should be promoted, archived, or deleted). */
+export const STALE_CAPTURE_MS = 14 * 24 * 60 * 60 * 1000
 import { normalizeTitle } from './sync/cluster.ts'
 
 /** Branded identifier prefixes keep record ids recognizable and collision-free. */
@@ -521,6 +525,116 @@ export class TrackStore {
     }
     await this.chain('issues', () => this.unit.putRecord('issues', issue.id, updated))
     return updated
+  }
+
+  /**
+   * Merge `sourceId` into `canonicalId` (same work line, duplicate task):
+   * union linked sessions / description / labels onto the canonical, then
+   * mark the source canceled with an evidence pointer. The caller is the
+   * confirmation gate — user-confirmed via the API, or 'auto' for the
+   * deterministic exact-title dedup loop (state-machine discipline: only
+   * the auto loop uses by='auto', and only for EXACT normalized-title
+   * equality, which is mechanical not judgmental).
+   */
+  async mergeIntoCanonical(sourceId: string, canonicalId: string, by: 'user' | 'auto' = 'user', now = Date.now()): Promise<Issue | undefined> {
+    await this.ready()
+    const source = await this.getIssue(sourceId)
+    const canonical = await this.getIssue(canonicalId)
+    if (!source || !canonical) return undefined
+    if (source.id === canonical.id) return canonical
+    const merged: Issue = {
+      ...canonical,
+      linkedSessionIds: Array.from(new Set([...(canonical.linkedSessionIds ?? []), ...(source.linkedSessionIds ?? [])])),
+      description: canonical.description || source.description,
+      labels: Array.from(new Set([...canonical.labels, ...source.labels])),
+      updatedAt: new Date().toISOString(),
+    }
+    const closed: Issue = {
+      ...source,
+      state: 'canceled',
+      pendingConfirm: undefined,
+      inferred: {
+        state: 'canceled',
+        confidence: 1,
+        at: now,
+        by: by === 'user' ? 'user' : 'auto',
+        evidence: [
+          ...(source.inferred?.evidence ?? []),
+          { signal: 'model-propose' as const, at: now, weight: 0, pointer: `merged into ${canonical.identifier} (${canonical.id})` },
+        ].slice(-MAX_EVIDENCE),
+      },
+      updatedAt: new Date().toISOString(),
+    }
+    await this.chain('issues', () => this.unit.putRecord('issues', canonical.id, merged))
+    await this.chain('issues', () => this.unit.putRecord('issues', source.id, closed))
+    await this.appendAudit({
+      id: makeId('audit'),
+      tool: 'track_update_issue_state',
+      ts: now,
+      ok: true,
+      detail: `${source.identifier} merged into ${canonical.identifier} (${by})`,
+    })
+    return merged
+  }
+
+  /**
+   * Capture triage (deterministic, zero LLM — part of the auto-maintenance
+   * loop): an open capture whose content IS an existing issue's title
+   * (normalized equality) is the concrete form of that work — promote it
+   * onto the issue instead of leaving it open forever. Counts stale open
+   * captures (older than STALE_CAPTURE_MS) so the loop can surface them.
+   */
+  async triageCaptures(now = Date.now()): Promise<{ open: number; promoted: number; stale: number }> {
+    await this.ready()
+    const [captures, issues] = await Promise.all([this.listCaptures(), this.listIssues()])
+    const titles = new Set(issues.map((i) => normalizeTitle(i.title)))
+    let promoted = 0
+    let stale = 0
+    for (const capture of captures) {
+      if (capture.status !== 'open') continue
+      if (titles.has(normalizeTitle(capture.content))) {
+        await this.promoteCaptureToIssue(capture.id, 'INV')
+        promoted += 1
+        continue
+      }
+      if (now - Date.parse(capture.createdAt) > STALE_CAPTURE_MS) stale += 1
+    }
+    return { open: captures.filter((c) => c.status === 'open').length, promoted, stale }
+  }
+
+  /**
+   * Auto-merge exact-title duplicates (the dedup loop): group NON-terminal
+   * issues by normalized title; every group with more than one member is a
+   * mechanical duplicate — merge the later ones into the first. Audited via
+   * mergeIntoCanonical(by='auto'). Near-duplicates (different wording) are
+   * NOT touched here — they need a human call.
+   */
+  async autoMergeExactDuplicates(now = Date.now()): Promise<{ groups: number; merged: number }> {
+    await this.ready()
+    const issues = await this.listIssues()
+    const byTitle = new Map<string, Issue[]>()
+    for (const issue of issues) {
+      if (issue.state === 'done' || issue.state === 'canceled') continue
+      const key = normalizeTitle(issue.title)
+      if (!key) continue
+      const list = byTitle.get(key) ?? []
+      list.push(issue)
+      byTitle.set(key, list)
+    }
+    let groups = 0
+    let merged = 0
+    for (const list of byTitle.values()) {
+      if (list.length < 2) continue
+      // Canonical = lowest identifier (INV-66 < INV-72); merge the rest into it.
+      const ordered = [...list].sort((a, b) => a.identifier.localeCompare(b.identifier, undefined, { numeric: true }))
+      const canonical = ordered[0]!
+      groups += 1
+      for (const dup of ordered.slice(1)) {
+        await this.mergeIntoCanonical(dup.id, canonical.id, 'auto', now)
+        merged += 1
+      }
+    }
+    return { groups, merged }
   }
 
   // ---- epics ----
