@@ -17,10 +17,12 @@
  *    (2026-08-14: session "任务转派与历史状态清理机制讨论" planned a 10-item
  *    todo + one goal; only the first todo entry ("C 调研…") captured and the
  *    A/B requirements in the goal were never seen).
- *  - subagent/descriptor + first child user message (delegation, G1): a
- *    subagent child's first user message IS its delegation prompt — captured
- *    once per child session (tag `auto:delegate`), so a direct
- *    subagent/workflow/ralph spawn without a prior todo still lands.
+ *  - subagent delegation (G1): a subagent child's first user message IS its
+ *    delegation prompt — captured once per child session (tag
+ *    `auto:delegate`), so a direct subagent/workflow/ralph spawn without a
+ *    prior todo still lands. Children are detected from the session header
+ *    (`origin: 'subagent'`); the `subagent/descriptor` event is a seed-phase
+ *    write that never publishes to live observers.
  *  - requirement-level user messages (G2): the first long (≥ minChars),
  *    non-ack user request per session captures as `auto:requirement`, so a
  *    discussion-style requirement that no todo/goal carries ("任务转派与历史
@@ -157,12 +159,23 @@ export function createAutoCapture(ctx: Context, deps: {
   const requirementSeen = new Set<string>()
   /** sessionId → subagent child whose delegation prompt was captured (G1). */
   const delegateSeen = new Set<string>()
-  /** sessionId → known subagent child (marked by subagent/descriptor). */
-  const subagentSessions = new Set<string>()
   /** sessionId → most recent FULL user instruction (motivation context, A). */
   const lastUserRequest = deps.recentUser ?? new Map<string, UserPromptRef>()
   /** sessionIds already seeded from the persisted log (or attempted). */
   const seeded = new Set<string>()
+
+  /**
+   * Is this session a subagent child? Read from the session header
+   * (`origin: 'subagent'` + `parentSession`), NOT from the
+   * `subagent/descriptor` event — that event is appended during the child's
+   * constructor seed, and seed-phase events never publish on the
+   * `session/event` firehose (harness: "constructor seeds do not emit"), so a
+   * live observer never sees it (verified 2026-08-14 on a real spawn: the
+   * delegation prompt landed as `auto:requirement`, not `auto:delegate`).
+   * Forks carry `origin: 'fork'` and are NOT delegations.
+   */
+  const isSubagentChild = (session: unknown): boolean =>
+    (session as { header?: { origin?: string; parentSession?: unknown } } | undefined)?.header?.origin === 'subagent'
 
   /** Ensure the context cache has an entry for the session (seed once from log). */
   const ensureContext = async (sessionId: string): Promise<void> => {
@@ -219,11 +232,12 @@ export function createAutoCapture(ctx: Context, deps: {
         // G1: subagent delegation — a child session's FIRST user message IS the
         // delegation prompt ("你是研究助理。任务：…"). Capture it once per
         // child session; the requirement signal below is skipped for children
-        // (the delegation covers the same text).
-        if (signals.delegate && subagentSessions.has(sessionId) && !delegateSeen.has(sessionId)) {
+        // (the delegation covers the same text). Subagent detection reads the
+        // session header (`origin: 'subagent'`) — see isSubagentChild.
+        if (signals.delegate && isSubagentChild(session) && !delegateSeen.has(sessionId)) {
           delegateSeen.add(sessionId)
           if (text) capture(sessionId, text.slice(0, reqMax), [tag, 'delegate'], undefined, { dedupeBySession: false })
-        } else if (signals.requirement && !subagentSessions.has(sessionId)
+        } else if (signals.requirement && !isSubagentChild(session)
           && !requirementSeen.has(sessionId) && text.length >= reqMin) {
           // G2: requirement-level user request — the first long, non-ack user
           // message per session (length-bounded so terse asks never flood the
@@ -241,13 +255,6 @@ export function createAutoCapture(ctx: Context, deps: {
     // the many events between splice and the first todo/branch signal, so the
     // signal below reads a warm cache synchronously.
     if (sessionId !== undefined) void ensureContext(sessionId)
-
-    // G1: mark subagent child sessions from their descriptor so the child's
-    // first user message can be captured as the delegation task.
-    if (event.type === 'subagent/descriptor' && sessionId !== undefined) {
-      subagentSessions.add(sessionId)
-      return
-    }
 
     // Goal creation — the strongest requirement signal in the harness: a
     // create_goal carries the full objective (A/B/C…), which the todo signal
