@@ -96,6 +96,10 @@ export declare class TrackStore {
     isSessionTodoCaptured(sessionId: string): Promise<boolean>;
     /** Persist the per-session todo-capture marker (idempotent). */
     markSessionTodoCaptured(sessionId: string): Promise<void>;
+    /** Has this session's first long REQUIREMENT already been captured (durable)? */
+    isSessionRequirementCaptured(sessionId: string): Promise<boolean>;
+    /** Persist the per-session requirement-capture marker (idempotent). */
+    markSessionRequirementCaptured(sessionId: string): Promise<void>;
     /**
      * Dedup-aware capture creation — the single gate every capture path
      * (auto-observer, capture_thought, HTTP panel) goes through.
@@ -111,6 +115,7 @@ export declare class TrackStore {
      */
     createCapture(capture: Capture, opts?: {
         dedupeBySession?: boolean;
+        dedupeRequirementBySession?: boolean;
     }): Promise<CaptureCreateResult>;
     getCapture(id: string): Promise<Capture | undefined>;
     deleteCapture(id: string): Promise<void>;

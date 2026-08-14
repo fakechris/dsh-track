@@ -219,6 +219,12 @@ export interface TrackGlobal {
      * restart (the 2026-08-13 duplicate-capture bug).
      */
     autoTodoSessions?: Record<string, string>;
+    /**
+     * Durable per-session marker for the G2 REQUIREMENT capture (one long user
+     * request per session, survives restarts — the in-memory set dies with the
+     * web process and caused re-captures after every restart).
+     */
+    autoRequirementSessions?: Record<string, string>;
     /** Runtime-tunable auto-maintenance knobs (defaults when absent). */
     config?: TrackConfig;
 }
