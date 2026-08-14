@@ -41,6 +41,12 @@ export const ABANDON_MS = 14 * 24 * 60 * 60 * 1000
  *  sweep stops proposing done for it (7 days — longer than the live 24h window,
  *  because sync-created issues are only ever re-evaluated by the sweep). */
 export const SWEEP_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
+/** Review threshold (ms): an in_progress issue with no progress for this long
+ *  (and no completion evidence) gets a REVIEW proposal — the machine asks the
+ *  user to judge done vs canceled instead of guessing. Shorter than the
+ *  abandonment window because sync-created issues carry no lifecycle data at
+ *  all; without this they would never surface for resolution. */
+export const STALE_REVIEW_MS = 2 * 24 * 60 * 60 * 1000
 
 /** Evidence kept per issue (rolling window — newest last). */
 export const MAX_EVIDENCE = 20
@@ -146,7 +152,7 @@ export function nextInferred(current: Issue, signals: readonly EvidenceRef[], no
  * evidence window for stale-completion evidence. Returns a proposal only;
  * confirmation stays user-gated (the caller writes `pendingConfirm`).
  */
-export function sweepProposal(current: Issue, now = Date.now()): { to: 'done' | 'canceled'; reason: string } | undefined {
+export function sweepProposal(current: Issue, now = Date.now()): { to: 'done' | 'canceled' | 'review'; reason: string } | undefined {
   if (current.state !== 'in_progress') return undefined
   const fresh = freshSignals(current.inferred?.evidence ?? [], now, SWEEP_WINDOW_MS)
   const conf = compositeConfidence(fresh)
@@ -157,10 +163,23 @@ export function sweepProposal(current: Issue, now = Date.now()): { to: 'done' | 
   if (userSaidDone || evidenceSaysDone) {
     return { to: 'done', reason: describeEvidence(fresh) }
   }
-  // Abandonment: no progress for the full window → propose canceled.
-  if (current.lastProgressAt && now - current.lastProgressAt > ABANDON_MS) {
-    const days = Math.max(1, Math.round((now - current.lastProgressAt) / 86_400_000))
-    return { to: 'canceled', reason: `no progress for ${days}d` }
+  // Progress anchor: live heartbeat when present, else the issue's own
+  // timestamps — sync-created issues carry neither evidence nor lastProgressAt,
+  // and without this proxy they would never be re-evaluated.
+  const lastActivity = current.lastProgressAt ?? Date.parse(current.updatedAt)
+  if (Number.isFinite(lastActivity) && lastActivity > 0) {
+    const idleMs = now - lastActivity
+    // Abandonment: no progress for the full window → propose canceled.
+    if (idleMs > ABANDON_MS) {
+      const days = Math.max(1, Math.round(idleMs / 86_400_000))
+      return { to: 'canceled', reason: `no progress for ${days}d` }
+    }
+    // Stale review: idle long enough that the machine cannot tell done from
+    // abandoned → ask the user (the zombie-task case: sync-created issues).
+    if (idleMs > STALE_REVIEW_MS) {
+      const days = Math.max(1, Math.round(idleMs / 86_400_000))
+      return { to: 'review', reason: `no progress for ${days}d — 确认完成还是取消？` }
+    }
   }
   return undefined
 }

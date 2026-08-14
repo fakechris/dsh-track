@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   ABANDON_MS,
+  STALE_REVIEW_MS,
   SWEEP_WINDOW_MS,
   compositeConfidence,
   describeEvidence,
@@ -198,9 +199,42 @@ describe('sweepProposal', () => {
     }
   })
 
+  it('proposes review for idle issues without evidence (zombie-task case)', () => {
+    // No lastProgressAt, no evidence — sync-created issues look exactly like
+    // this. Idle (by updatedAt) beyond STALE_REVIEW_MS but under ABANDON_MS.
+    const issue = makeIssue({
+      state: 'in_progress',
+      updatedAt: new Date(now - 3 * 86400_000).toISOString(),
+    })
+    const p = sweepProposal(issue, now)
+    expect(p?.to).toBe('review')
+    expect(p?.reason).toContain('no progress')
+  })
+
+  it('uses updatedAt as the progress proxy when lastProgressAt is absent', () => {
+    const fresh = makeIssue({ state: 'in_progress', updatedAt: new Date(now - 3600_000).toISOString() })
+    expect(sweepProposal(fresh, now)).toBeUndefined()
+    const stale = makeIssue({ state: 'in_progress', updatedAt: new Date(now - STALE_REVIEW_MS - 1000).toISOString() })
+    expect(sweepProposal(stale, now)?.to).toBe('review')
+  })
+
+  it('completion evidence wins over the stale-review fallback', () => {
+    const issue = makeIssue({
+      state: 'in_progress',
+      updatedAt: new Date(now - 10 * 86400_000).toISOString(), // long idle
+      inferred: {
+        state: 'in_progress', confidence: 0.8,
+        at: now - 5 * 86400_000, by: 'auto',
+        evidence: [ev('todo-all-done', now - 5 * 86400_000), ev('turn-completed', now - 5 * 86400_000)],
+      },
+    })
+    expect(sweepProposal(issue, now)?.to).toBe('done')
+  })
+
   it('penalties in the sweep window suppress a done proposal', () => {
     const issue = makeIssue({
       state: 'in_progress',
+      lastProgressAt: now - 1000, // fresh progress — no review either
       inferred: {
         state: 'in_progress', confidence: 0.5,
         at: now, by: 'auto',

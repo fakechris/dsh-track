@@ -539,21 +539,28 @@ function render(snapshot: Snapshot): void {
   }
 }
 
-/** One pending-confirmation card: the machine proposed done/canceled; the
- *  user confirms (state commit) or dismisses (marker cleared, may re-propose). */
+/** One pending-confirmation card: the machine proposed done/canceled/review; the
+ *  user confirms (state commit) or dismisses (marker cleared, may re-propose).
+ *  review = machine cannot tell done from abandoned — asks which way to go. */
 function renderPendingCard(i: Issue): string {
   const pc = i.pendingConfirm!
-  const toLabel = pc.to === 'done' ? '确认完成' : '确认取消'
-  const why = pc.to === 'done' ? '证据显示已完成' : '长期无进展'
+  const isReview = pc.to === 'review'
+  const toLabel = pc.to === 'done' ? '确认完成' : pc.to === 'canceled' ? '确认取消' : '确认完成'
+  const why = pc.to === 'done' ? '证据显示已完成'
+    : pc.to === 'canceled' ? '长期无进展'
+    : '请人工判定状态'
   const reason = `${why}：${escapeHtml(pc.reason)} · ${new Date(pc.at).toLocaleString()}`
+  const actions = isReview
+    ? `<button class="inv-act inv-confirm" data-confirm="${i.id}" data-to="done">确认完成</button>` +
+      `<button class="inv-act" data-confirm="${i.id}" data-to="canceled">确认取消</button>` +
+      `<button class="inv-act" data-dismiss="${i.id}">还在做</button>`
+    : `<button class="inv-act inv-confirm" data-confirm="${i.id}" data-to="${pc.to}">${toLabel}</button>` +
+      `<button class="inv-act" data-dismiss="${i.id}">驳回</button>`
   return `<div class="inv-card inv-pending-card" data-id="${i.id}">` +
     `<div class="inv-issue-header"><span class="inv-issue-id">${escapeHtml(i.identifier)}</span>` +
     `<span class="inv-issue-title">${escapeHtml(i.title)}</span></div>` +
     `<div class="inv-pending-reason">${reason}</div>` +
-    `<div class="inv-actions">` +
-    `<button class="inv-act inv-confirm" data-confirm="${i.id}" data-to="${pc.to}">${toLabel}</button>` +
-    `<button class="inv-act" data-dismiss="${i.id}">驳回</button>` +
-    `</div></div>`
+    `<div class="inv-actions">${actions}</div></div>`
 }
 
 /** One capture card with delete (two-step confirm) + promote actions. */
