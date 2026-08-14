@@ -17,6 +17,17 @@
  *    (2026-08-14: session "任务转派与历史状态清理机制讨论" planned a 10-item
  *    todo + one goal; only the first todo entry ("C 调研…") captured and the
  *    A/B requirements in the goal were never seen).
+ *  - subagent/descriptor + first child user message (delegation, G1): a
+ *    subagent child's first user message IS its delegation prompt — captured
+ *    once per child session (tag `auto:delegate`), so a direct
+ *    subagent/workflow/ralph spawn without a prior todo still lands.
+ *  - requirement-level user messages (G2): the first long (≥ minChars),
+ *    non-ack user request per session captures as `auto:requirement`, so a
+ *    discussion-style requirement that no todo/goal carries ("任务转派与历史
+ *    状态清理机制讨论") still reaches the wall.
+ *
+ * Every signal is a configurable flag (`AutoCaptureOptions.signals`); the
+ * default mask enables all four (todo / goal / delegate / requirement).
  *
  * Git branch creation was REMOVED as a signal (2026-08-11): "新建分支 feat/…"
  * is an execution carrier, not a requirement — in practice it dominated the
@@ -45,13 +56,39 @@ import { makeId } from '../store.ts'
 import type { TrackStore } from '../store.ts'
 import { isShortAck, type UserPromptRef } from './context.ts'
 
+/** Signal mask — which structured signals auto-capture. Default: all on. */
+export interface CaptureSignalsConfig {
+  /** todo_write / todo/write → the first planned entry per session. */
+  todo?: boolean
+  /** goal/change (create) → the goal objective, once per goal id. */
+  goal?: boolean
+  /** subagent delegation → the child session's first user message (the
+   *  delegation prompt), once per subagent session. */
+  delegate?: boolean
+  /** requirement-level user messages → the first long, non-ack user request
+   *  per session (bounded by the requirement thresholds). */
+  requirement?: boolean
+}
+
 /** Signals the observer reacts to, for testability and logging. */
 export interface AutoCaptureOptions {
   /** Tag applied to rule-captured thoughts. */
   tag?: string
+  /** Signal mask. Defaults: every signal on. */
+  signals?: CaptureSignalsConfig
+  /** G2 requirement-capture thresholds (bounded, minimal version). */
+  requirement?: {
+    /** Min chars for a user message to count as a requirement (default 40). */
+    minChars?: number
+    /** Max chars captured (truncation bound, default 500). */
+    maxChars?: number
+  }
 }
 
 const DEFAULT_TAG = 'auto'
+/** G2 bounds: below minChars is a terse ask, above maxChars is truncated. */
+const DEFAULT_REQ_MIN = 40
+const DEFAULT_REQ_MAX = 500
 
 /** One tool/call event's data (arguments arrive as a JSON string). */
 interface ToolCallData {
@@ -101,12 +138,27 @@ export function createAutoCapture(ctx: Context, deps: {
   recentUser?: Map<string, UserPromptRef>
 }, options: AutoCaptureOptions = {}): () => void {
   const tag = options.tag ?? DEFAULT_TAG
+  /** Signal mask — every signal on unless the config opts out. */
+  const signals: Required<CaptureSignalsConfig> = {
+    todo: options.signals?.todo ?? true,
+    goal: options.signals?.goal ?? true,
+    delegate: options.signals?.delegate ?? true,
+    requirement: options.signals?.requirement ?? true,
+  }
+  const reqMin = options.requirement?.minChars ?? DEFAULT_REQ_MIN
+  const reqMax = options.requirement?.maxChars ?? DEFAULT_REQ_MAX
   /** sessionId → captured (in-process fast path; the durable marker in the
    *  store is authoritative across restarts — see store.createCapture). */
   const todoSeen = new Set<string>()
   /** goalId → captured (one capture per created goal, in-process fast path;
    *  the store's content-hash dedup is the cross-restart backstop). */
   const goalSeen = new Set<string>()
+  /** sessionId → first requirement-level user message captured (G2). */
+  const requirementSeen = new Set<string>()
+  /** sessionId → subagent child whose delegation prompt was captured (G1). */
+  const delegateSeen = new Set<string>()
+  /** sessionId → known subagent child (marked by subagent/descriptor). */
+  const subagentSessions = new Set<string>()
   /** sessionId → most recent FULL user instruction (motivation context, A). */
   const lastUserRequest = deps.recentUser ?? new Map<string, UserPromptRef>()
   /** sessionIds already seeded from the persisted log (or attempted). */
@@ -164,6 +216,22 @@ export function createAutoCapture(ctx: Context, deps: {
           .join('')
           .trim()
         if (text && !isShortAck(text)) lastUserRequest.set(sessionId, { text: text.slice(0, 200), id: data?.id })
+        // G1: subagent delegation — a child session's FIRST user message IS the
+        // delegation prompt ("你是研究助理。任务：…"). Capture it once per
+        // child session; the requirement signal below is skipped for children
+        // (the delegation covers the same text).
+        if (signals.delegate && subagentSessions.has(sessionId) && !delegateSeen.has(sessionId)) {
+          delegateSeen.add(sessionId)
+          if (text) capture(sessionId, text.slice(0, reqMax), [tag, 'delegate'], undefined, { dedupeBySession: false })
+        } else if (signals.requirement && !subagentSessions.has(sessionId)
+          && !requirementSeen.has(sessionId) && text.length >= reqMin) {
+          // G2: requirement-level user request — the first long, non-ack user
+          // message per session (length-bounded so terse asks never flood the
+          // wall). The discussion-style requirement ("任务转派与历史状态清理
+          // 机制讨论") that no todo/goal would carry now lands here.
+          requirementSeen.add(sessionId)
+          capture(sessionId, text.slice(0, reqMax), [tag, 'requirement'], undefined, { dedupeBySession: false })
+        }
       }
       return
     }
@@ -174,11 +242,18 @@ export function createAutoCapture(ctx: Context, deps: {
     // signal below reads a warm cache synchronously.
     if (sessionId !== undefined) void ensureContext(sessionId)
 
+    // G1: mark subagent child sessions from their descriptor so the child's
+    // first user message can be captured as the delegation task.
+    if (event.type === 'subagent/descriptor' && sessionId !== undefined) {
+      subagentSessions.add(sessionId)
+      return
+    }
+
     // Goal creation — the strongest requirement signal in the harness: a
     // create_goal carries the full objective (A/B/C…), which the todo signal
     // below cannot see (its first entry is usually a sub-task). Capture every
     // created goal's objective once (per goal id).
-    if (event.type === 'goal/change') {
+    if (signals.goal && event.type === 'goal/change') {
       const data = event.data as GoalChangeData | undefined
       if (data?.operation === 'create' && sessionId !== undefined
         && data.goal?.id !== undefined && !goalSeen.has(data.goal.id)) {
@@ -197,7 +272,8 @@ export function createAutoCapture(ctx: Context, deps: {
     // event never double-capture). Only the FIRST planned entry of a session
     // captures once (B): a later refresh is the same plan's execution.
     const todos: Array<{ content?: string }> | undefined =
-      event.type === 'todo/write'
+      !signals.todo ? undefined
+        : event.type === 'todo/write'
         ? (event.data as { todos?: Array<{ content?: string }> } | undefined)?.todos
         : event.type === 'tool/call' && (event.data as ToolCallData | undefined)?.name === 'todo_write'
           ? (() => {

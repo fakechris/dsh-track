@@ -21,7 +21,7 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import { TrackStore, makeId } from './store.ts'
 import type { Capture, Decision, EvidenceRef, Issue, IssueState, LlmUsageRecord } from './types.ts'
 import { runSync } from './sync/run.ts'
-import { createAutoCapture } from './capture/observe.ts'
+import { createAutoCapture, type CaptureSignalsConfig } from './capture/observe.ts'
 import { backfillCaptureContext } from './capture/backfill.ts'
 import { latestUserRequest, type ContextSessionQuery, type UserPromptRef } from './capture/context.ts'
 import { setUsageRecorder } from './sync/llm.ts'
@@ -37,6 +37,12 @@ export const inject = ['tools', 'storage']
 export interface Config {
   /** Workspace / team key used for Linear-style identifiers (default INV). */
   teamKey?: string
+  /** Auto-capture signal mask — which structured signals produce captures.
+   *  Default: every signal on (todo / goal / delegate / requirement). */
+  captureSignals?: CaptureSignalsConfig
+  /** G2 requirement-capture thresholds: minChars (below = terse ask, skipped)
+   *  and maxChars (truncation bound). Defaults 40 / 500. */
+  requirementCapture?: { minChars?: number; maxChars?: number }
 }
 
 /** Default team key when config omits it. */
@@ -727,7 +733,10 @@ export function apply(ctx: Context, config?: Config) {
     // the observer and read by the tools (promptOf), so captures/decisions/
     // issues created after a restart still carry the prompt's message id.
     const seedContext = (sessionId: string) => latestUserRequest(getSessionQuery(ctx) as ContextSessionQuery | undefined, sessionId)
-    const disposeAutoCapture = createAutoCapture(ctx, { store, seedContext, recentUser })
+    const disposeAutoCapture = createAutoCapture(ctx, { store, seedContext, recentUser }, {
+      signals: config?.captureSignals,
+      requirement: config?.requirementCapture,
+    })
     return () => disposeAutoCapture()
   })
 
