@@ -999,8 +999,36 @@ export function apply(ctx: Context, config?: Config) {
       }
       json(res, { error: 'method not allowed' }, 405)
     })
-    registerRoute('/sync', async (req, res) => {
-      await ensureStoreOpen()
+    // POST /api/track/issues/batch — batch state change: mark many issues
+    // done/canceled in ONE request ({ ids: [...], to }). Each id resolves by
+    // store id OR Linear identifier; results are per-id so partial failures
+    // surface instead of aborting the batch. The panel batch mode and scripts
+    // use this instead of looping the per-id confirm endpoint.
+    registerRoute('/issues/batch', async (req, res) => {
+      if (req.method !== 'POST') { json(res, { error: 'method not allowed' }, 405); return }
+      const body = await readBody(req)
+      const raw = Array.isArray(body.ids) ? body.ids.filter((x): x is string => typeof x === 'string') : []
+      const to = body.to
+      if (raw.length === 0) { json(res, { error: 'ids (non-empty array) required' }, 400); return }
+      if (to !== 'done' && to !== 'canceled') { json(res, { error: 'to must be "done" or "canceled"' }, 400); return }
+      const results: Array<Record<string, unknown>> = []
+      for (const id of raw) {
+        const found = await store.getIssueByInput(id)
+        if (!found) {
+          results.push({ id, status: 'failed', error: 'issue not found' })
+          continue
+        }
+        const updated = await store.confirmIssueState(found.id, to, 'user')
+        results.push({
+          id,
+          identifier: found.identifier,
+          state: updated?.state ?? found.state,
+          status: 'done',
+        })
+      }
+      json(res, { ok: true, results })
+    })
+    registerRoute('/sync', async (req, res) => {      await ensureStoreOpen()
       if (req.method !== 'POST') { json(res, { error: 'method not allowed' }, 405); return }
       const sessionQuery = getSessionQuery(ctx)
       if (!sessionQuery) {

@@ -1122,12 +1122,12 @@ export function mountRightPanel(ctx: ClientContext): () => void {
       batchConfirmTo = null
       batchSelected.clear()
       if (to !== null && ids.length > 0) {
-        void Promise.all(ids.map((id) =>
-          fetch(`/api/track/issues/${encodeURIComponent(id)}/confirm`, {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ to }),
-          }).catch(() => undefined))).then(() => refresh())
+        // One batch request (per-id results) instead of N confirm calls.
+        void fetch('/api/track/issues/batch', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ ids, to }),
+        }).catch(() => undefined).then(() => refresh())
       } else {
         refresh()
       }
