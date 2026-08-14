@@ -395,6 +395,12 @@ const PANEL_CSS = `
 }
 #${PANEL_ID} .inv-page:disabled { opacity: .35; cursor: default; }
 #${PANEL_ID} .inv-page-info { font-size: 11px; opacity: .7; }
+#${PANEL_ID} .inv-page-input {
+  width: 30px; height: 22px; border: 1px solid var(--dsw-alias-border-l2, rgba(0,0,0,.15));
+  border-radius: 5px; background: transparent; color: inherit; font-size: 12px;
+  text-align: center; padding: 0;
+}
+#${PANEL_ID} .inv-page-input:focus { outline: 1px solid #4c8dff; }
 #${PANEL_ID} .inv-meta { font-size: 11px; opacity: .6; margin-top: 3px; }
 #${PANEL_ID} .inv-issue-count { font-weight: 400; }
 #${PANEL_ID} .inv-state-group {
@@ -515,9 +521,45 @@ function syncGrid(): void {
     : 'minmax(0, 2fr) minmax(0, 1fr)'
 }
 
+/**
+ * Pager controls: first («) / prev (‹) / direct page-number input / next (›) /
+ * last (»). `kind` selects the data-attr family the delegation handlers read.
+ */
+function renderPager(page: number, totalPages: number, kind: 'capture' | 'issue'): string {
+  const d = kind === 'capture' ? 'data-page' : 'data-issue-page'
+  const input = kind === 'capture' ? 'data-page-input="capture"' : 'data-page-input="issue"'
+  if (totalPages <= 1) return ''
+  return (
+    `<button class="inv-page" ${d}="0" ${page === 0 ? 'disabled' : ''} title="第一页">«</button>` +
+    `<button class="inv-page" ${d}="${page - 1}" ${page === 0 ? 'disabled' : ''} title="上一页">‹</button>` +
+    `<input class="inv-page-input" ${input} value="${page + 1}" inputmode="numeric" title="跳到第几页（回车）">` +
+    `<span class="inv-page-info">/ ${totalPages}</span>` +
+    `<button class="inv-page" ${d}="${page + 1}" ${page >= totalPages - 1 ? 'disabled' : ''} title="下一页">›</button>` +
+    `<button class="inv-page" ${d}="${totalPages - 1}" ${page >= totalPages - 1 ? 'disabled' : ''} title="最后一页">»</button>`
+  )
+}
+
+/** The pager currently being paged — its viewport position anchors the scroll
+ *  across the re-render so clicking a page button no longer makes the panel
+ *  jump (user feedback 2026-08-14: "点翻页之后页面晃，找不到按钮了"). */
+let pagerAnchorTarget: 'captures' | 'issues' | null = null
+
+/** Viewport-relative top of one pager inside the panel body scrollport. */
+function pagerRelTop(body: HTMLElement, target: 'captures' | 'issues'): number | null {
+  const pager = body.querySelector<HTMLElement>(target === 'captures' ? '.inv-pager' : '.inv-issue-pager')
+  if (pager === null) return null
+  return pager.getBoundingClientRect().top - body.getBoundingClientRect().top
+}
+
 function render(snapshot: Snapshot): void {
   if (panel === null) return
   const q = (sel: string): HTMLElement | null => panel!.querySelector(sel)
+  // Scroll anchor: record the paged pager's viewport position before the
+  // re-render, restore it after (list heights change on page switch).
+  const body = q('.inv-body')
+  const anchor = body !== null && pagerAnchorTarget !== null
+    ? { target: pagerAnchorTarget, relTop: pagerRelTop(body, pagerAnchorTarget) }
+    : null
   // Pending confirmations first: issues where the machine proposed done/
   // canceled and the user still has to nod (lifecycle sweep, Part B2).
   const pendingEl = q('.inv-pending')
@@ -545,11 +587,7 @@ function render(snapshot: Snapshot): void {
       : pageCaps.map((c) => renderCaptureCard(c)).join('')
     const pager = q('.inv-pager')
     if (pager !== null) {
-      pager.innerHTML = totalPages > 1
-        ? `<button class="inv-page" data-page="${capturePage - 1}" ${capturePage === 0 ? 'disabled' : ''}>‹</button>` +
-          `<span class="inv-page-info">${capturePage + 1}/${totalPages}</span>` +
-          `<button class="inv-page" data-page="${capturePage + 1}" ${capturePage >= totalPages - 1 ? 'disabled' : ''}>›</button>`
-        : ''
+      pager.innerHTML = renderPager(capturePage, totalPages, 'capture')
     }
   }
   const issEl = q('.inv-issues')
@@ -608,13 +646,17 @@ function render(snapshot: Snapshot): void {
       : cards.join('')
     const pager = q('.inv-issue-pager')
     if (pager !== null) {
-      pager.innerHTML = totalPages > 1
-        ? `<button class="inv-page inv-issue-page" data-issue-page="${issuePage - 1}" ${issuePage === 0 ? 'disabled' : ''}>‹</button>` +
-          `<span class="inv-page-info">${issuePage + 1}/${totalPages}</span>` +
-          `<button class="inv-page inv-issue-page" data-issue-page="${issuePage + 1}" ${issuePage >= totalPages - 1 ? 'disabled' : ''}>›</button>`
-        : ''
+      pager.innerHTML = renderPager(issuePage, totalPages, 'issue')
     }
   }
+  // Restore the anchored scroll position (see the anchor capture above).
+  if (anchor !== null && anchor.relTop !== null && body !== null) {
+    const after = pagerRelTop(body, anchor.target)
+    if (after !== null) {
+      body.scrollTop = Math.max(0, body.scrollTop + anchor.relTop - after)
+    }
+  }
+  pagerAnchorTarget = null
 }
 
 /** One pending-confirmation card: the machine proposed done/canceled/review; the
@@ -755,7 +797,8 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]!)
 }
 
-function refresh(): void {
+function refresh(target?: 'captures' | 'issues'): void {
+  if (target !== undefined) pagerAnchorTarget = target
   void fetchSnapshot().then(render)
 }
 
@@ -965,7 +1008,7 @@ export function mountRightPanel(ctx: ClientContext): () => void {
 
   // ---- panel events ----
   panel.querySelector('.inv-close')?.addEventListener('click', () => setPanelOpen(false))
-  panel.querySelector('.inv-refresh')?.addEventListener('click', refresh)
+  panel.querySelector('.inv-refresh')?.addEventListener('click', () => refresh())
   // Settings: gear toggles the form; form loads the effective config and
   // POSTs a patch on save (missing fields keep their current value).
   const settingsPanel = panel.querySelector<HTMLElement>('.inv-settings-panel')
@@ -1024,7 +1067,7 @@ export function mountRightPanel(ctx: ClientContext): () => void {
       if (Number.isInteger(page) && page >= 0) {
         issuePage = page
         expandedIssueId = null
-        refresh()
+        refresh('issues')
       }
       return
     }
@@ -1033,7 +1076,7 @@ export function mountRightPanel(ctx: ClientContext): () => void {
       const page = Number(pageBtn.dataset.page)
       if (Number.isInteger(page) && page >= 0) {
         capturePage = page
-        refresh()
+        refresh('captures')
       }
       return
     }
@@ -1083,7 +1126,7 @@ export function mountRightPanel(ctx: ClientContext): () => void {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ to }),
-          }).catch(() => undefined))).then(refresh)
+          }).catch(() => undefined))).then(() => refresh())
       } else {
         refresh()
       }
@@ -1121,7 +1164,7 @@ export function mountRightPanel(ctx: ClientContext): () => void {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ to }),
-        }).then(refresh)
+        }).then(() => refresh())
       } else {
         refresh()
       }
@@ -1157,7 +1200,7 @@ export function mountRightPanel(ctx: ClientContext): () => void {
       confirmCaptureDeleteId = null
       if (id) {
         void fetch(`/api/track/captures/${encodeURIComponent(id)}`, { method: 'DELETE' })
-          .then(refresh)
+          .then(() => refresh())
       } else {
         refresh()
       }
@@ -1168,7 +1211,7 @@ export function mountRightPanel(ctx: ClientContext): () => void {
       const id = promote.getAttribute('data-capture-promote')
       if (id) {
         void fetch(`/api/track/captures/${encodeURIComponent(id)}/promote`, { method: 'POST' })
-          .then(refresh)
+          .then(() => refresh())
       }
       return
     }
@@ -1183,7 +1226,7 @@ export function mountRightPanel(ctx: ClientContext): () => void {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ to }),
-        }).then(refresh)
+        }).then(() => refresh())
       }
       return
     }
@@ -1191,7 +1234,7 @@ export function mountRightPanel(ctx: ClientContext): () => void {
     if (dismissBtn !== null) {
       const id = dismissBtn.getAttribute('data-dismiss')
       if (id) {
-        void fetch(`/api/track/issues/${encodeURIComponent(id)}/dismiss`, { method: 'POST' }).then(refresh)
+        void fetch(`/api/track/issues/${encodeURIComponent(id)}/dismiss`, { method: 'POST' }).then(() => refresh())
       }
       return
     }
@@ -1207,7 +1250,7 @@ export function mountRightPanel(ctx: ClientContext): () => void {
       confirmIssueDeleteId = null
       if (id) {
         void fetch(`/api/track/issues/${encodeURIComponent(id)}`, { method: 'DELETE' })
-          .then(refresh)
+          .then(() => refresh())
       } else {
         refresh()
       }
@@ -1224,6 +1267,24 @@ export function mountRightPanel(ctx: ClientContext): () => void {
     }
   }
   panel.addEventListener('click', onAction)
+
+  // Page-number input: Enter jumps to the typed page (both pagers).
+  panel.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return
+    const input = (e.target as HTMLElement).closest<HTMLInputElement>('[data-page-input]')
+    if (input === null) return
+    const kind = input.getAttribute('data-page-input')
+    const page = Number(input.value)
+    if (!Number.isInteger(page) || page < 1) return
+    if (kind === 'capture') {
+      capturePage = page - 1
+      refresh('captures')
+    } else if (kind === 'issue') {
+      issuePage = page - 1
+      expandedIssueId = null
+      refresh('issues')
+    }
+  })
 
   // ---- width resizer ----
   const resizer = panel.querySelector<HTMLElement>('.inv-width-resizer')
