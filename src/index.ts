@@ -886,16 +886,20 @@ export function apply(ctx: Context, config?: Config) {
         if (to !== 'done' && to !== 'canceled') {
           json(res, { error: 'to must be "done" or "canceled"' }, 400); return
         }
-        const issue = await store.confirmIssueState(id, to, 'user')
-        if (!issue) { json(res, { error: 'issue not found' }, 404); return }
-        json(res, { ok: true, issue: { id: issue.id, identifier: issue.identifier, state: issue.state } }); return
+        // Resolve by store id OR Linear identifier (INV-12) — the panel
+        // passes store ids, callers may pass identifiers.
+        const found = await store.getIssueByInput(id)
+        if (!found) { json(res, { error: 'issue not found' }, 404); return }
+        const updated = await store.confirmIssueState(found.id, to, 'user')
+        json(res, { ok: true, issue: { id: updated?.id ?? found.id, identifier: updated?.identifier ?? found.identifier, state: updated?.state ?? found.state } }); return
       }
       // POST /api/track/issues/:id/dismiss — reject the pending proposal
       // without changing state (the sweep may re-propose later).
       if (req.method === 'POST' && pathname.endsWith('/dismiss')) {
-        const issue = await store.dismissPending(id)
-        if (!issue) { json(res, { error: 'issue not found' }, 404); return }
-        json(res, { ok: true, issue: { id: issue.id, identifier: issue.identifier, state: issue.state } }); return
+        const found = await store.getIssueByInput(id)
+        if (!found) { json(res, { error: 'issue not found' }, 404); return }
+        await store.dismissPending(found.id)
+        json(res, { ok: true, issue: { id: found.id, identifier: found.identifier, state: found.state } }); return
       }
       if (req.method === 'DELETE') {
         await store.deleteIssue(id)
