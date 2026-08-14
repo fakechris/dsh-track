@@ -106,7 +106,7 @@ export interface Issue {
    * Cleared on confirm (state commit) or explicit dismiss. `state` never
    * changes without the user (the confirmation-gate principle).
    */
-  pendingConfirm?: { to: 'done' | 'canceled'; reason: string; at: number }
+  pendingConfirm?: { to: 'done' | 'canceled' | 'review'; reason: string; at: number }
 }
 
 /** One piece of lifecycle evidence (the state machine's input). */

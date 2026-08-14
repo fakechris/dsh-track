@@ -218,16 +218,24 @@ describe('lifecycle store integration (real json backend)', () => {
       id: 'track_issue_sweep_ok', identifier: 'INV-85', state: 'in_progress',
       lastProgressAt: now - 1000,
     }))
+    // Zombie sync-created issue: no evidence, no lastProgressAt, stale
+    // updatedAt → review proposal (machine asks the user which way to go).
+    await trackStore.upsertIssue(makeIssue({
+      id: 'track_issue_sweep_review', identifier: 'INV-88', state: 'in_progress',
+      updatedAt: new Date(now - 3 * 86400_000).toISOString(),
+    }))
 
     const report = await trackStore.sweepLifecycle(now)
-    // evaluated >= 3: the shared store also holds track_issue_pc1 (in_progress
+    // evaluated >= 4: the shared store also holds track_issue_pc1 (in_progress
     // with a pendingConfirm already set by the earlier evidence test).
-    expect(report.evaluated).toBeGreaterThanOrEqual(3)
-    expect(report.proposed).toBe(2)
+    expect(report.evaluated).toBeGreaterThanOrEqual(4)
+    expect(report.proposed).toBe(3)
     const done = await trackStore.getIssue('track_issue_sweep_done')
     expect(done?.pendingConfirm?.to).toBe('done')
     const cancel = await trackStore.getIssue('track_issue_sweep_cancel')
     expect(cancel?.pendingConfirm?.to).toBe('canceled')
+    const review = await trackStore.getIssue('track_issue_sweep_review')
+    expect(review?.pendingConfirm?.to).toBe('review')
     const ok = await trackStore.getIssue('track_issue_sweep_ok')
     expect(ok?.pendingConfirm).toBeUndefined()
 
