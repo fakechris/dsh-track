@@ -37,6 +37,10 @@ export function modelProposeWeight(target: IssueState): number {
 
 /** Abandonment window: no progress for this long → propose canceled. */
 export const ABANDON_MS = 14 * 24 * 60 * 60 * 1000
+/** Sweep window (ms): how old completion evidence may be before the periodic
+ *  sweep stops proposing done for it (7 days — longer than the live 24h window,
+ *  because sync-created issues are only ever re-evaluated by the sweep). */
+export const SWEEP_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
 
 /** Evidence kept per issue (rolling window — newest last). */
 export const MAX_EVIDENCE = 20
@@ -66,8 +70,8 @@ export function compositeConfidence(signals: readonly EvidenceRef[]): number {
 }
 
 /** Only consider signals inside the evidence window (freshness guard). */
-export function freshSignals(signals: readonly EvidenceRef[], now: number): EvidenceRef[] {
-  return signals.filter((s) => now - s.at <= EVIDENCE_WINDOW_MS)
+export function freshSignals(signals: readonly EvidenceRef[], now: number, windowMs = EVIDENCE_WINDOW_MS): EvidenceRef[] {
+  return signals.filter((s) => now - s.at <= windowMs)
 }
 
 /** Result of one state-machine evaluation. */
@@ -132,6 +136,33 @@ export function nextInferred(current: Issue, signals: readonly EvidenceRef[], no
 
   // 4. No change — mirror the current state (confidence still updated).
   return { inferred: { ...base, state: current.state, confidence: conf, by: 'auto' } }
+}
+
+/**
+ * Periodic-sweep evaluation (no live events needed): every in_progress issue
+ * is re-checked on a timer, because the observer only records signals for the
+ * ATTACHED session — sync-created issues would otherwise never surface a
+ * done/canceled proposal. Same gates as `nextInferred` but with a wider
+ * evidence window for stale-completion evidence. Returns a proposal only;
+ * confirmation stays user-gated (the caller writes `pendingConfirm`).
+ */
+export function sweepProposal(current: Issue, now = Date.now()): { to: 'done' | 'canceled'; reason: string } | undefined {
+  if (current.state !== 'in_progress') return undefined
+  const fresh = freshSignals(current.inferred?.evidence ?? [], now, SWEEP_WINDOW_MS)
+  const conf = compositeConfidence(fresh)
+  const has = (s: LifecycleSignal): boolean => fresh.some((x) => x.signal === s)
+  // Completion evidence (stale allowed up to the sweep window) → propose done.
+  const userSaidDone = has('user-confirm') && conf >= 0.85
+  const evidenceSaysDone = has('todo-all-done') && has('turn-completed') && conf >= 0.7
+  if (userSaidDone || evidenceSaysDone) {
+    return { to: 'done', reason: describeEvidence(fresh) }
+  }
+  // Abandonment: no progress for the full window → propose canceled.
+  if (current.lastProgressAt && now - current.lastProgressAt > ABANDON_MS) {
+    const days = Math.max(1, Math.round((now - current.lastProgressAt) / 86_400_000))
+    return { to: 'canceled', reason: `no progress for ${days}d` }
+  }
+  return undefined
 }
 
 /** Should the caller auto-commit `state` for this transition? (safe/reversible only.) */

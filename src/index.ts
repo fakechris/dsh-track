@@ -42,6 +42,9 @@ export interface Config {
 /** Default team key when config omits it. */
 export const DEFAULT_TEAM_KEY = 'INV'
 
+/** Lifecycle sweep cadence: re-evaluate in_progress issues this often (6h). */
+export const SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000
+
 export const store = new TrackStore()
 
 /**
@@ -128,6 +131,7 @@ export function apply(ctx: Context, config?: Config) {
   }
 
   // Open the KV unit once a kv-capable backend lands (see resolveKv).
+  let sweepTimer: ReturnType<typeof setInterval> | undefined
   ctx.effect(async () => {
     try {
       const kv = await resolveKv(ctx)
@@ -140,11 +144,29 @@ export function apply(ctx: Context, config?: Config) {
       // Wire the lifecycle evidence observer (Part B): converts the structured
       // tool stream into evidence for the attached issue of each session.
       lifecycle = createLifecycleObserver(ctx, { store })
+      // Periodic lifecycle sweep (Part B2): the observer only fires for the
+      // attached session, so sync-created issues never accumulate evidence and
+      // their done/canceled proposals would never surface. The sweep re-runs
+      // the state machine over EVERY in_progress issue and persists
+      // `pendingConfirm` for the panel to show. Confirmation stays user-gated.
+      const runSweep = (): void => {
+        void ensureStoreOpen()
+          .then(() => store.sweepLifecycle())
+          .then((s) => {
+            if (s.proposed > 0) {
+              console.log(`[dsh-track] sweep: ${s.proposed}/${s.evaluated} in_progress → pending confirmation`)
+            }
+          })
+          .catch((e) => console.error('[dsh-track] sweep failed:', e))
+      }
+      runSweep() // first pass right after boot so existing zombies surface
+      sweepTimer = setInterval(runSweep, SWEEP_INTERVAL_MS)
     } catch (e) {
       console.error('[dsh-track] store open failed:', e)
       throw e
     }
     return () => {
+      if (sweepTimer !== undefined) clearInterval(sweepTimer)
       lifecycle?.dispose()
       store.close()
     }
@@ -424,8 +446,12 @@ export function apply(ctx: Context, config?: Config) {
         `Current state: ${state}${state !== issue.state ? ' (auto-advanced from ' + issue.state + ')' : ''}`,
         inferred ? `Inferred: ${inferred.state} @ ${(inferred.confidence * 100).toFixed(0)}%` : '',
       ]
-      if (result.confirm) {
-        lines.push(`Pending confirmation: mark ${result.confirm.to} (${result.confirm.reason}). Ask the user.`)
+      const pending = result.confirm
+        ?? (result.issue.pendingConfirm
+          ? { to: result.issue.pendingConfirm.to, reason: result.issue.pendingConfirm.reason }
+          : undefined)
+      if (pending) {
+        lines.push(`Pending confirmation: mark ${pending.to} (${pending.reason}). Ask the user or confirm in the panel.`)
       }
       return lines.filter(Boolean).join('\n')
     },
@@ -462,6 +488,9 @@ export function apply(ctx: Context, config?: Config) {
         inferred
           ? `Inferred: ${inferred.state} @ ${(inferred.confidence * 100).toFixed(0)}% (by ${inferred.by})`
           : 'Inferred: none yet (no evidence recorded)',
+        issue.pendingConfirm
+          ? `PENDING CONFIRMATION: mark ${issue.pendingConfirm.to} (${issue.pendingConfirm.reason}) — resolve via the panel or track_update_issue_state with confirmed_by_user=true`
+          : '',
         '',
         'Evidence (newest last):',
         ...(inferred?.evidence.length
@@ -846,7 +875,27 @@ export function apply(ctx: Context, config?: Config) {
           lastProgressAt: issue.lastProgressAt ?? null,
           attachSessionId: issue.attachSessionId ?? null,
           inferred: issue.inferred ?? null,
+          pendingConfirm: issue.pendingConfirm ?? null,
         }); return
+      }
+      // POST /api/track/issues/:id/confirm — user confirms a pending
+      // done/canceled proposal (the panel's 本确认 section).
+      if (req.method === 'POST' && pathname.endsWith('/confirm')) {
+        const body = await readBody(req)
+        const to = body.to
+        if (to !== 'done' && to !== 'canceled') {
+          json(res, { error: 'to must be "done" or "canceled"' }, 400); return
+        }
+        const issue = await store.confirmIssueState(id, to, 'user')
+        if (!issue) { json(res, { error: 'issue not found' }, 404); return }
+        json(res, { ok: true, issue: { id: issue.id, identifier: issue.identifier, state: issue.state } }); return
+      }
+      // POST /api/track/issues/:id/dismiss — reject the pending proposal
+      // without changing state (the sweep may re-propose later).
+      if (req.method === 'POST' && pathname.endsWith('/dismiss')) {
+        const issue = await store.dismissPending(id)
+        if (!issue) { json(res, { error: 'issue not found' }, 404); return }
+        json(res, { ok: true, issue: { id: issue.id, identifier: issue.identifier, state: issue.state } }); return
       }
       if (req.method === 'DELETE') {
         await store.deleteIssue(id)

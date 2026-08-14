@@ -8,12 +8,14 @@
 import { describe, expect, it } from 'vitest'
 import {
   ABANDON_MS,
+  SWEEP_WINDOW_MS,
   compositeConfidence,
   describeEvidence,
   evidenceWeight,
   freshSignals,
   isAutoCommit,
   nextInferred,
+  sweepProposal,
 } from '../src/lifecycle/state-machine.ts'
 import type { Issue } from '../src/types.ts'
 
@@ -151,5 +153,64 @@ describe('freshSignals / describeEvidence', () => {
     const now = 1_800_000_000_000
     expect(describeEvidence([ev('todo-all-done', now), ev('turn-completed', now), ev('turn-completed', now - 1)]))
       .toBe('todo-all-done, turn-completed×2')
+  })
+})
+
+describe('sweepProposal', () => {
+  const now = 1_800_000_000_000
+
+  it('proposes done from completion evidence even when older than 24h (7d sweep window)', () => {
+    const issue = makeIssue({
+      state: 'in_progress',
+      inferred: {
+        state: 'in_progress', confidence: 0.8,
+        at: now - 2 * 86400_000, by: 'auto',
+        evidence: [ev('todo-all-done', now - 2 * 86400_000), ev('turn-completed', now - 2 * 86400_000)],
+      },
+    })
+    const p = sweepProposal(issue, now)
+    expect(p?.to).toBe('done')
+  })
+
+  it('proposes done from user-confirm evidence (stale allowed)', () => {
+    const issue = makeIssue({
+      state: 'in_progress',
+      inferred: {
+        state: 'in_progress', confidence: 1,
+        at: now - 3 * 86400_000, by: 'auto',
+        evidence: [ev('user-confirm', now - 3 * 86400_000, '可以了')],
+      },
+    })
+    expect(sweepProposal(issue, now)?.to).toBe('done')
+  })
+
+  it('proposes canceled for abandonment (no progress for 14d), even with no signals', () => {
+    const issue = makeIssue({ state: 'in_progress', lastProgressAt: now - ABANDON_MS - 1000 })
+    const p = sweepProposal(issue, now)
+    expect(p?.to).toBe('canceled')
+    expect(p?.reason).toContain('no progress')
+  })
+
+  it('returns nothing for todo/done/canceled issues', () => {
+    for (const state of ['todo', 'done', 'canceled'] as const) {
+      const issue = makeIssue({ state, lastProgressAt: now - ABANDON_MS - 1000 })
+      expect(sweepProposal(issue, now)).toBeUndefined()
+    }
+  })
+
+  it('penalties in the sweep window suppress a done proposal', () => {
+    const issue = makeIssue({
+      state: 'in_progress',
+      inferred: {
+        state: 'in_progress', confidence: 0.5,
+        at: now, by: 'auto',
+        evidence: [
+          ev('todo-all-done', now - 2000),
+          ev('turn-completed', now - 1000),
+          ev('turn-error', now),
+        ],
+      },
+    })
+    expect(sweepProposal(issue, now)).toBeUndefined()
   })
 })

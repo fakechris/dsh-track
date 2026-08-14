@@ -182,4 +182,114 @@ describe('lifecycle store integration (real json backend)', () => {
     const b = await trackStore.getIssue('track_issue_b')
     expect(b?.attachSessionId).toBe('session-z')
   })
+
+  it('recordIssueEvidence persists pendingConfirm for a gated done proposal', async () => {
+    const id = 'track_issue_pc1'
+    const now = Date.now()
+    await trackStore.upsertIssue(makeIssue({ id, identifier: 'INV-82', state: 'in_progress' }))
+    await trackStore.recordIssueEvidence(id, { signal: 'todo-all-done', at: now - 1000, weight: 0.6 }, 's', now)
+    const r = await trackStore.recordIssueEvidence(id, { signal: 'turn-completed', at: now, weight: 0.3 }, 's', now)
+    expect(r?.confirm?.to).toBe('done')
+    const issue = await trackStore.getIssue(id)
+    expect(issue?.pendingConfirm?.to).toBe('done')
+    expect(issue?.state).toBe('in_progress') // still gated
+  })
+
+  it('sweepLifecycle surfaces done/canceled proposals for unattached sync-created issues', async () => {
+    const now = Date.now()
+    // Stale completion evidence, NO attachSessionId (the observer never fires).
+    await trackStore.upsertIssue(makeIssue({
+      id: 'track_issue_sweep_done', identifier: 'INV-83', state: 'in_progress',
+      inferred: {
+        state: 'in_progress', confidence: 0.8, at: now - 3 * 86400_000, by: 'auto',
+        evidence: [
+          { signal: 'todo-all-done', at: now - 3 * 86400_000, weight: 0.6 },
+          { signal: 'turn-completed', at: now - 3 * 86400_000, weight: 0.3 },
+        ],
+      },
+    }))
+    // Abandoned for 15 days, no evidence at all.
+    await trackStore.upsertIssue(makeIssue({
+      id: 'track_issue_sweep_cancel', identifier: 'INV-84', state: 'in_progress',
+      lastProgressAt: now - 15 * 86400_000,
+    }))
+    // A healthy in_progress issue must stay untouched.
+    await trackStore.upsertIssue(makeIssue({
+      id: 'track_issue_sweep_ok', identifier: 'INV-85', state: 'in_progress',
+      lastProgressAt: now - 1000,
+    }))
+
+    const report = await trackStore.sweepLifecycle(now)
+    // evaluated >= 3: the shared store also holds track_issue_pc1 (in_progress
+    // with a pendingConfirm already set by the earlier evidence test).
+    expect(report.evaluated).toBeGreaterThanOrEqual(3)
+    expect(report.proposed).toBe(2)
+    const done = await trackStore.getIssue('track_issue_sweep_done')
+    expect(done?.pendingConfirm?.to).toBe('done')
+    const cancel = await trackStore.getIssue('track_issue_sweep_cancel')
+    expect(cancel?.pendingConfirm?.to).toBe('canceled')
+    const ok = await trackStore.getIssue('track_issue_sweep_ok')
+    expect(ok?.pendingConfirm).toBeUndefined()
+
+    // Idempotent: a second sweep with the same proposals proposes nothing new.
+    const again = await trackStore.sweepLifecycle(now)
+    expect(again.proposed).toBe(0)
+  })
+
+  it('confirming a pending proposal commits state and clears the marker', async () => {
+    const id = 'track_issue_pc2'
+    const now = Date.now()
+    await trackStore.upsertIssue(makeIssue({
+      id, identifier: 'INV-86', state: 'in_progress',
+      pendingConfirm: { to: 'done', reason: 'todo-all-done, turn-completed', at: now },
+    }))
+    const updated = await trackStore.confirmIssueState(id, 'done')
+    expect(updated?.state).toBe('done')
+    expect(updated?.pendingConfirm).toBeUndefined()
+  })
+
+  it('dismissPending clears the marker without changing state', async () => {
+    const id = 'track_issue_pc3'
+    const now = Date.now()
+    await trackStore.upsertIssue(makeIssue({
+      id, identifier: 'INV-87', state: 'in_progress',
+      pendingConfirm: { to: 'canceled', reason: 'no progress for 15d', at: now },
+    }))
+    const updated = await trackStore.dismissPending(id)
+    expect(updated?.state).toBe('in_progress')
+    expect(updated?.pendingConfirm).toBeUndefined()
+  })
+
+  it('promoteCaptureToIssue carries context and dedupes by normalized title', async () => {
+    await trackStore.upsertIssue(makeIssue({
+      id: 'track_issue_dup', identifier: 'INV-88', state: 'todo',
+      title: '调研 StreamChunk 结构',
+    }))
+    await trackStore.createCapture({
+      id: 'track_capture_p1', content: '调研StreamChunk结构',
+      source: 'session', sourceSessionId: 's1', sourceMessageId: 'm1',
+      status: 'open', tags: ['auto', 'todo'],
+      context: '做一个模块记录 llm 计算开销',
+      createdAt: new Date().toISOString(),
+    })
+    const promoted = await trackStore.promoteCaptureToIssue('track_capture_p1')
+    // Same normalized title as INV-88 → promote ONTO it, no new issue.
+    expect(promoted.identifier).toBe('INV-88')
+    const cap = await trackStore.getCapture('track_capture_p1')
+    expect(cap?.status).toBe('promoted')
+    expect(cap?.promotedToIssueId).toBe('track_issue_dup')
+  })
+
+  it('promoteCaptureToIssue mints a new issue with motivation context', async () => {
+    await trackStore.createCapture({
+      id: 'track_capture_p2', content: '新调研任务',
+      source: 'user', status: 'open', tags: [],
+      context: '因为要出一份调研报告',
+      createdAt: new Date().toISOString(),
+    })
+    const issue = await trackStore.promoteCaptureToIssue('track_capture_p2')
+    expect(issue.title).toBe('新调研任务')
+    expect(issue.description).toContain('动机')
+    expect(issue.description).toContain('因为要出一份调研报告')
+  })
 })
