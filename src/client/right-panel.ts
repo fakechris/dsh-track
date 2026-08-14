@@ -527,15 +527,16 @@ function syncGrid(): void {
  */
 function renderPager(page: number, totalPages: number, kind: 'capture' | 'issue'): string {
   const d = kind === 'capture' ? 'data-page' : 'data-issue-page'
+  const cls = kind === 'capture' ? 'inv-page' : 'inv-page inv-issue-page'
   const input = kind === 'capture' ? 'data-page-input="capture"' : 'data-page-input="issue"'
   if (totalPages <= 1) return ''
   return (
-    `<button class="inv-page" ${d}="0" ${page === 0 ? 'disabled' : ''} title="第一页">«</button>` +
-    `<button class="inv-page" ${d}="${page - 1}" ${page === 0 ? 'disabled' : ''} title="上一页">‹</button>` +
+    `<button class="${cls}" ${d}="0" ${page === 0 ? 'disabled' : ''} title="第一页">«</button>` +
+    `<button class="${cls}" ${d}="${page - 1}" ${page === 0 ? 'disabled' : ''} title="上一页">‹</button>` +
     `<input class="inv-page-input" ${input} value="${page + 1}" inputmode="numeric" title="跳到第几页（回车）">` +
     `<span class="inv-page-info">/ ${totalPages}</span>` +
-    `<button class="inv-page" ${d}="${page + 1}" ${page >= totalPages - 1 ? 'disabled' : ''} title="下一页">›</button>` +
-    `<button class="inv-page" ${d}="${totalPages - 1}" ${page >= totalPages - 1 ? 'disabled' : ''} title="最后一页">»</button>`
+    `<button class="${cls}" ${d}="${page + 1}" ${page >= totalPages - 1 ? 'disabled' : ''} title="下一页">›</button>` +
+    `<button class="${cls}" ${d}="${totalPages - 1}" ${page >= totalPages - 1 ? 'disabled' : ''} title="最后一页">»</button>`
   )
 }
 
