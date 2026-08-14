@@ -259,4 +259,123 @@ describe('createAutoCapture', () => {
     expect(cap.sourceMessageId).toBe('msg-live-2')
     dispose()
   })
+
+  // ---- goal/change signal (2026-08-14: goal requirements were invisible —
+  // only the first todo entry ever captured) ----
+
+  it('captures a created goal as a requirement (goal/change create)', () => {
+    const ctx = new Context()
+    const store = makeStore()
+    const dispose = createAutoCapture(ctx, { store })
+
+    ctx.emit('session/event', { id: 's1' }, {
+      type: 'user/message',
+      data: { id: 'msg-g-1', content: [{ type: 'text', text: 'A B 先做 C 需要讨论，状态机设计要详细讨论' }], source: { kind: 'user' } },
+    })
+    ctx.emit('session/event', { id: 's1' }, {
+      type: 'goal/change',
+      data: {
+        operation: 'create',
+        goal: { id: 'goal-1', objective: '完成 A/B 改造并落地 3080：A=修复完成确认通道；B=打通捕获→任务转化' },
+      },
+    })
+
+    expect(store.createCapture).toHaveBeenCalledTimes(1)
+    const cap = store.captures[0]!
+    expect(cap.content).toBe('完成 A/B 改造并落地 3080：A=修复完成确认通道；B=打通捕获→任务转化')
+    expect(cap.tags).toContain('goal')
+    expect(cap.sourceSessionId).toBe('s1')
+    expect(cap.context).toContain('状态机设计要详细讨论')
+    expect(cap.sourceMessageId).toBe('msg-g-1')
+    dispose()
+  })
+
+  it('does NOT capture goal updates (only creation)', () => {
+    const ctx = new Context()
+    const store = makeStore()
+    const dispose = createAutoCapture(ctx, { store })
+
+    ctx.emit('session/event', { id: 's1' }, {
+      type: 'goal/change',
+      data: { operation: 'update', goal: { id: 'goal-1', objective: '进度更新' } },
+    })
+    expect(store.createCapture).not.toHaveBeenCalled()
+    dispose()
+  })
+
+  it('dedupes repeated goal/change for one goal id, captures distinct goals', () => {
+    const ctx = new Context()
+    const store = makeStore()
+    const dispose = createAutoCapture(ctx, { store })
+
+    const goalChange = (id: string, objective: string) => ctx.emit('session/event', { id: 's1' }, {
+      type: 'goal/change',
+      data: { operation: 'create', goal: { id, objective } },
+    })
+    goalChange('goal-1', '目标一')
+    goalChange('goal-1', '目标一（revision 2）') // same id → suppressed
+    goalChange('goal-2', '目标二')
+    expect(store.createCapture).toHaveBeenCalledTimes(2)
+    expect(store.captures.map((c) => c.content)).toEqual(['目标一', '目标二'])
+    dispose()
+  })
+
+  it('goal + todo in one session capture BOTH (the 2026-08-14 incident case)', () => {
+    const ctx = new Context()
+    const store = makeStore()
+    const dispose = createAutoCapture(ctx, { store })
+
+    // Realistic sequence: user requirements → create_goal (A/B/C) → todo_write
+    // whose FIRST entry is a sub-task (C 调研). Both must land on the wall.
+    ctx.emit('session/event', { id: 's1' }, {
+      type: 'user/message',
+      data: { content: [{ type: 'text', text: '任务转派与历史状态清理机制讨论' }], source: { kind: 'user' } },
+    })
+    ctx.emit('session/event', { id: 's1' }, {
+      type: 'goal/change',
+      data: { operation: 'create', goal: { id: 'goal-x', objective: 'A=修复完成确认通道；B=打通捕获→任务转化；C=调研状态机论文' } },
+    })
+    emitTool(ctx, 's1', 'todo_write', {
+      todos: [
+        { content: 'C 调研：后台 subagent 搜集状态机论文' },
+        { content: 'A: types.ts 增加 pendingConfirm 字段' },
+        { content: 'B: promoteCaptureToIssue 质量提升' },
+      ],
+    })
+
+    expect(store.createCapture).toHaveBeenCalledTimes(2)
+    expect(store.captures[0]!.content).toContain('A=修复完成确认通道')
+    expect(store.captures[0]!.tags).toContain('goal')
+    expect(store.captures[1]!.content).toBe('C 调研：后台 subagent 搜集状态机论文')
+    expect(store.captures[1]!.tags).toContain('todo')
+    dispose()
+  })
+
+  // ---- todo/write event signal (the canonical structured form) ----
+
+  it('captures from the todo/write EVENT (not just the tool call)', () => {
+    const ctx = new Context()
+    const store = makeStore()
+    const dispose = createAutoCapture(ctx, { store })
+
+    ctx.emit('session/event', { id: 's1' }, {
+      type: 'todo/write',
+      data: { todos: [{ content: '从事件驱动的规划信号捕获', status: 'in_progress' }] },
+    })
+    expect(store.createCapture).toHaveBeenCalledTimes(1)
+    expect(store.captures[0]!.content).toBe('从事件驱动的规划信号捕获')
+    expect(store.captures[0]!.tags).toContain('todo')
+    dispose()
+  })
+
+  it('a todo_write tool call + its todo/write event capture once (shared gate)', () => {
+    const ctx = new Context()
+    const store = makeStore()
+    const dispose = createAutoCapture(ctx, { store })
+
+    emitTool(ctx, 's1', 'todo_write', { todos: [{ content: '计划 X' }] })
+    ctx.emit('session/event', { id: 's1' }, { type: 'todo/write', data: { todos: [{ content: '计划 X' }] } })
+    expect(store.createCapture).toHaveBeenCalledTimes(1)
+    dispose()
+  })
 })
