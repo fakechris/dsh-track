@@ -20,14 +20,15 @@
 | Shell/作业 | `bash` `job_output` `job_list` `job_kill` | `tool/call` / `tool/result` |
 | Web | `web_search` `web_fetch` | `tool/call` + 搜索类旁路事件 |
 | 任务/目标 | `todo_write` `create_goal` `get_goal` `update_goal` | **`todo/write`** / **`goal/change`** |
-| 编排 | `subagent` `subagent_fork` `send_message` `list_agents` `interrupt_agent` `workflow` `ralph` | **`subagent/descriptor`** + 子会话首条 `user/message` |
+| 编排 | `subagent` `subagent_fork` `send_message` `list_agents` `interrupt_agent` `workflow` `ralph` | 子会话首条 `user/message`（header `origin:'subagent'`） |
 | 交互/计划/调度/技能 | `ask_user_question` `plan` `schedule_create/list/delete` `skill` | `user/message`（用户回答）等 |
 | 自修改/查询 | `cordis_define/run/stop/undefine` `session_query` | `tool/call` |
 | Track（本插件） | `capture_thought` `report_decision_point` + 11 个 `track_*` | 工具自身写存储 |
 
 会话事件全集（观察器经 `session/event` 可见）：`user/message` `assistant/message` `assistant/chunk`
 `tool/call` `tool/result` `turn/start` `turn/end` `step/start` `step/end` `todo/write` `goal/change`
-`subagent/descriptor` `request/header` `request/context` `session/end-seed` `tool/code-dispatch*` 等。
+`subagent/descriptor`（**seed 阶段写入，不发布给观察器**，仅日志）`request/header` `request/context`
+`session/end-seed` `tool/code-dispatch*` 等。
 
 ## 二、信号覆盖审计（工具/事件 → track 三个消费面）
 
@@ -53,7 +54,7 @@
 |---|---|---|---|
 | `todo` | `auto:todo` | todo 首项/会话 | 会话级（持久标记） |
 | `goal` | `auto:goal` | goal objective/创建 | goal-id 级 |
-| `delegate`（G1） | `auto:delegate` | 子会话首条 user 消息（委托 prompt） | 子会话级 |
+| `delegate`（G1） | `auto:delegate` | 子会话首条 user 消息（委托 prompt；判定=header `origin:'subagent'`，fork 排除） | 子会话级 |
 | `requirement`（G2） | `auto:requirement` | 首条长需求 user 消息 | 会话级 + 内容哈希 |
 
 **明确不做（执行载体，git-branch 前车之鉴）**：bash、文件读写、web 抓取、作业、技能、调度、

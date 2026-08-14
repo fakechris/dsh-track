@@ -381,18 +381,15 @@ describe('createAutoCapture', () => {
 
   // ---- G1: subagent delegation signal (2026-08-14 audit gap) ----
 
-  it('captures a subagent delegation prompt (subagent/descriptor + first user message)', () => {
+  it('captures a subagent delegation prompt (child header origin=subagent)', () => {
     const ctx = new Context()
     const store = makeStore()
     const dispose = createAutoCapture(ctx, { store })
 
-    // A subagent child session starts with a descriptor, then its delegation
-    // prompt arrives as the first user-kind user message.
-    ctx.emit('session/event', { id: 'child-1' }, {
-      type: 'subagent/descriptor',
-      data: { version: 2, mode: 'continuable', provider: 'spawn', label: '调研状态机论文' },
-    })
-    ctx.emit('session/event', { id: 'child-1' }, {
+    // A subagent child session carries origin:'subagent' in its header; its
+    // delegation prompt arrives as the first user-kind user message. (The
+    // subagent/descriptor event is a seed-phase write that never publishes.)
+    ctx.emit('session/event', { id: 'child-1', header: { origin: 'subagent', parentSession: 'parent-1' } }, {
       type: 'user/message',
       data: { content: [{ type: 'text', text: '你是研究助理。任务：为一款 AI 编码助手的嵌入式任务管理插件调研相关学术论文，并产出带链接的调研文档。' }], source: { kind: 'user' } },
     })
@@ -410,9 +407,9 @@ describe('createAutoCapture', () => {
     const store = makeStore()
     const dispose = createAutoCapture(ctx, { store })
 
-    ctx.emit('session/event', { id: 's1' }, {
+    ctx.emit('session/event', { id: 's1', header: { origin: undefined } }, {
       type: 'user/message',
-      data: { content: [{ type: 'text', text: '这是一个普通用户的第一个长消息，没有 descriptor 标记，不应作为委托捕获。' }], source: { kind: 'user' } },
+      data: { content: [{ type: 'text', text: '这是一个普通用户的第一个长消息，没有 subagent 头标记，不应该作为委托捕获，而应该作为需求级消息进入捕获墙。' }], source: { kind: 'user' } },
     })
     // Not a delegate capture — but it IS a requirement-level message (G2).
     expect(store.createCapture).toHaveBeenCalledTimes(1)
@@ -421,16 +418,30 @@ describe('createAutoCapture', () => {
     dispose()
   })
 
+  it('fork children (origin=fork) are NOT delegate-captured', () => {
+    const ctx = new Context()
+    const store = makeStore()
+    const dispose = createAutoCapture(ctx, { store })
+
+    ctx.emit('session/event', { id: 'fork-1', header: { origin: 'fork', parentSession: 'parent-1' } }, {
+      type: 'user/message',
+      data: { content: [{ type: 'text', text: '分叉会话继承的第一条消息，是父会话内容而不是委托，不应作为 delegate 捕获。' }], source: { kind: 'user' } },
+    })
+    expect(store.createCapture).toHaveBeenCalledTimes(1)
+    expect(store.captures[0]!.tags).toContain('requirement')
+    expect(store.captures[0]!.tags).not.toContain('delegate')
+    dispose()
+  })
+
   it('delegation captures once per child session', () => {
     const ctx = new Context()
     const store = makeStore()
     const dispose = createAutoCapture(ctx, { store })
 
-    const childMsg = (text: string) => ctx.emit('session/event', { id: 'child-1' }, {
+    const childMsg = (text: string) => ctx.emit('session/event', { id: 'child-1', header: { origin: 'subagent', parentSession: 'parent-1' } }, {
       type: 'user/message',
       data: { content: [{ type: 'text', text }], source: { kind: 'user' } },
     })
-    ctx.emit('session/event', { id: 'child-1' }, { type: 'subagent/descriptor', data: { label: 'x' } })
     childMsg('你是研究助理。任务：第一个委托任务，需要完整捕获。')
     childMsg('你是研究助理。任务：第二个委托任务（应被去重）。')
     expect(store.createCapture).toHaveBeenCalledTimes(1)
