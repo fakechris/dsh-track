@@ -97,6 +97,16 @@ export interface Issue {
    * `inferred` is what the evidence says; `state` is what we've committed to.
    */
   inferred?: IssueInferred
+  /**
+   * Confirmation-gated state change awaiting a user nod (done / canceled).
+   * Written by the live evidence path AND by the periodic lifecycle sweep —
+   * the sweep re-evaluates EVERY in_progress issue, because sync-created
+   * issues have no attached session and never accumulate live evidence. The
+   * panel renders a pending-confirmation section; confirm/dismiss resolves it.
+   * Cleared on confirm (state commit) or explicit dismiss. `state` never
+   * changes without the user (the confirmation-gate principle).
+   */
+  pendingConfirm?: { to: 'done' | 'canceled'; reason: string; at: number }
 }
 
 /** One piece of lifecycle evidence (the state machine's input). */

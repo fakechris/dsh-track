@@ -25,7 +25,8 @@ import {
   type LlmUsageRecord,
   type EvidenceRef,
 } from './types.ts'
-import { MAX_EVIDENCE, isAutoCommit, nextInferred } from './lifecycle/state-machine.ts'
+import { MAX_EVIDENCE, isAutoCommit, nextInferred, sweepProposal } from './lifecycle/state-machine.ts'
+import { normalizeTitle } from './sync/cluster.ts'
 
 /** Branded identifier prefixes keep record ids recognizable and collision-free. */
 export const ID_PREFIX = {
@@ -268,11 +269,29 @@ export class TrackStore {
       const existing = await this.getIssue(capture.promotedToIssueId)
       if (existing) return existing
     }
+    // Dedupe: a capture that is the concrete form of an existing issue
+    // (same normalized title) promotes ONTO that issue instead of minting
+    // a duplicate task — the same contract the sync align pass uses.
+    const existingByTitle = (await this.listIssues())
+      .find((i) => normalizeTitle(i.title) === normalizeTitle(capture.content))
+    if (existingByTitle) {
+      await this.chain('captures', () =>
+        this.unit.putRecord('captures', capture.id, {
+          ...capture,
+          status: 'promoted' as const,
+          promotedToIssueId: existingByTitle.id,
+        }))
+      return existingByTitle
+    }
     const issue: Issue = {
       id: makeId('issue'),
       identifier: await this.nextIdentifier(teamKey),
       title: capture.content,
-      description: capture.content,
+      // Carry the motivation context into the issue description so the task
+      // keeps its 'why' (capture context = the most recent explicit request).
+      description: capture.context
+        ? `${capture.content}\n\n动机: ${capture.context}`
+        : capture.content,
       priority: 2,
       state: 'todo',
       teamId: teamKey,
@@ -411,6 +430,15 @@ export class TrackStore {
     if (isAutoCommit(next, issue)) {
       updated.state = 'in_progress'
     }
+    // Surface confirmation-gated proposals as `pendingConfirm` (done/canceled):
+    // the live observer callers are fire-and-forget, so returning `confirm`
+    // alone used to drop the proposal; persisting it lets the panel render a
+    // pending-confirmation section. Never cleared here — only confirm/dismiss.
+    if (next.confirm) {
+      // The machine only ever gates done/canceled (state-machine.ts) — cast
+      // the union to the pendingConfirm contract.
+      updated.pendingConfirm = { to: next.confirm.to as 'done' | 'canceled', reason: next.confirm.reason, at: now }
+    }
     await this.chain('issues', () => this.unit.putRecord('issues', issue.id, updated))
     return { issue: updated, confirm: next.confirm }
   }
@@ -427,6 +455,8 @@ export class TrackStore {
     const updated: Issue = {
       ...issue,
       state,
+      // A committed done/canceled resolves any pending confirmation.
+      pendingConfirm: (state === 'done' || state === 'canceled') ? undefined : issue.pendingConfirm,
       inferred: {
         state,
         confidence: 1,
@@ -434,6 +464,59 @@ export class TrackStore {
         at: now,
         by,
       },
+      updatedAt: new Date().toISOString(),
+    }
+    await this.chain('issues', () => this.unit.putRecord('issues', issue.id, updated))
+    return updated
+  }
+
+  /**
+   * Periodic lifecycle sweep: re-evaluate EVERY in_progress issue (not just
+   * attached-session ones) and persist `pendingConfirm` where the machine sees
+   * completion evidence or abandonment. The live observer only fires for the
+   * attached session, so sync-created issues never accumulate evidence —
+   * without this sweep their done/canceled proposals would never surface.
+   * Confirmation stays user-gated: this only PROPOSES (writes pendingConfirm).
+   * @returns how many issues were evaluated and how many got a fresh proposal.
+   */
+  async sweepLifecycle(now = Date.now()): Promise<{ evaluated: number; proposed: number }> {
+    await this.ready()
+    const issues = await this.listIssues()
+    let evaluated = 0
+    let proposed = 0
+    for (const issue of issues) {
+      if (issue.state !== 'in_progress') continue
+      evaluated += 1
+      const proposal = sweepProposal(issue, now)
+      if (!proposal) continue
+      const same = issue.pendingConfirm !== undefined
+        && issue.pendingConfirm.to === proposal.to
+        && issue.pendingConfirm.reason === proposal.reason
+      if (same) continue
+      await this.chain('issues', () =>
+        this.unit.putRecord('issues', issue.id, {
+          ...issue,
+          pendingConfirm: { to: proposal.to, reason: proposal.reason, at: now },
+          updatedAt: new Date().toISOString(),
+        }))
+      proposed += 1
+    }
+    return { evaluated, proposed }
+  }
+
+  /**
+   * User dismissed a pending proposal: clear the marker without changing
+   * `state`. The sweep may re-propose while the underlying evidence stands —
+   * dismissal is a one-shot ack, not a veto; users can also delete the issue.
+   */
+  async dismissPending(issueId: string): Promise<Issue | undefined> {
+    await this.ready()
+    const issue = await this.getIssue(issueId)
+    if (!issue) return undefined
+    if (!issue.pendingConfirm) return issue
+    const updated: Issue = {
+      ...issue,
+      pendingConfirm: undefined,
       updatedAt: new Date().toISOString(),
     }
     await this.chain('issues', () => this.unit.putRecord('issues', issue.id, updated))

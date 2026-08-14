@@ -212,6 +212,10 @@ function buildPanelHtml(): string {
       <div class="inv-pager"></div>
     </div>
     <div class="inv-section">
+      <div class="inv-section-title">待确认 <span class="inv-pending-count"></span></div>
+      <div class="inv-pending"></div>
+    </div>
+    <div class="inv-section">
       <div class="inv-section-title">任务 <span class="inv-issue-count"></span></div>
       <div class="inv-issues"></div>
       <div class="inv-issue-pager"></div>
@@ -375,6 +379,15 @@ const PANEL_CSS = `
 #${PANEL_ID} .inv-state-in_progress { background: rgba(76,141,255,.2); color: #2f6fd0; }
 #${PANEL_ID} .inv-state-done { background: rgba(46,160,67,.2); color: #1a7f37; }
 #${PANEL_ID} .inv-state-canceled { background: rgba(229,72,77,.15); color: #c33; }
+#${PANEL_ID} .inv-state-pending { background: rgba(255,165,0,.22); color: #b26a00; }
+#${PANEL_ID} .inv-pending-card { border-color: rgba(255,165,0,.45); }
+#${PANEL_ID} .inv-pending-reason {
+  font-size: 11.5px; opacity: .75; padding: 0 9px 2px; white-space: pre-wrap; word-break: break-word;
+}
+#${PANEL_ID} .inv-act.inv-confirm {
+  border-color: rgba(46,160,67,.5); background: rgba(46,160,67,.12); color: #1a7f37;
+}
+#${PANEL_ID} .inv-act.inv-confirm:hover { background: rgba(46,160,67,.2); }
 #${PANEL_ID} .inv-issue-detail {
   border-top: 1px dashed var(--dsw-alias-border-l1, rgba(0,0,0,.1));
   padding: 6px 9px 2px; background: var(--dsw-alias-bg-layer-1, rgba(0,0,0,.02));
@@ -448,6 +461,17 @@ function syncGrid(): void {
 function render(snapshot: Snapshot): void {
   if (panel === null) return
   const q = (sel: string): HTMLElement | null => panel!.querySelector(sel)
+  // Pending confirmations first: issues where the machine proposed done/
+  // canceled and the user still has to nod (lifecycle sweep, Part B2).
+  const pendingEl = q('.inv-pending')
+  if (pendingEl !== null) {
+    const pending = snapshot.issues.filter((i) => i.pendingConfirm !== undefined)
+    const pendingCount = q('.inv-pending-count')
+    if (pendingCount !== null) pendingCount.textContent = pending.length > 0 ? `(${pending.length})` : ''
+    pendingEl.innerHTML = pending.length === 0
+      ? '<div class="inv-empty">无待确认变更</div>'
+      : pending.map((i) => renderPendingCard(i)).join('')
+  }
   // Newest first (user feedback 2026-08-12: the capture wall was showing
   // insertion order = oldest on top). createdAt desc, id tiebreak for stability.
   const openCaptures = snapshot.captures
@@ -515,6 +539,23 @@ function render(snapshot: Snapshot): void {
   }
 }
 
+/** One pending-confirmation card: the machine proposed done/canceled; the
+ *  user confirms (state commit) or dismisses (marker cleared, may re-propose). */
+function renderPendingCard(i: Issue): string {
+  const pc = i.pendingConfirm!
+  const toLabel = pc.to === 'done' ? '确认完成' : '确认取消'
+  const why = pc.to === 'done' ? '证据显示已完成' : '长期无进展'
+  const reason = `${why}：${escapeHtml(pc.reason)} · ${new Date(pc.at).toLocaleString()}`
+  return `<div class="inv-card inv-pending-card" data-id="${i.id}">` +
+    `<div class="inv-issue-header"><span class="inv-issue-id">${escapeHtml(i.identifier)}</span>` +
+    `<span class="inv-issue-title">${escapeHtml(i.title)}</span></div>` +
+    `<div class="inv-pending-reason">${reason}</div>` +
+    `<div class="inv-actions">` +
+    `<button class="inv-act inv-confirm" data-confirm="${i.id}" data-to="${pc.to}">${toLabel}</button>` +
+    `<button class="inv-act" data-dismiss="${i.id}">驳回</button>` +
+    `</div></div>`
+}
+
 /** One capture card with delete (two-step confirm) + promote actions. */
 function renderCaptureCard(c: Capture): string {
   const meta = `${c.tags.map(escapeHtml).join(' · ')}${c.tags.length ? ' · ' : ''}${new Date(c.createdAt).toLocaleString()}`
@@ -552,6 +593,7 @@ function renderIssueCard(i: Issue): string {
       `<div class="inv-issue-header" data-issue-toggle="${i.id}">` +
         `<span class="inv-issue-id">${escapeHtml(i.identifier)}</span>` +
         `<span class="inv-state inv-state-${i.state}">${i.state}</span>` +
+        `${i.pendingConfirm ? `<span class="inv-state inv-state-pending">待确认</span>` : ''}` +
         `<span class="inv-issue-title">${escapeHtml(i.title)}</span>` +
         `<span class="inv-chevron">${expanded ? '▾' : '▸'}</span>` +
       `</div>` +
@@ -897,6 +939,29 @@ export function mountRightPanel(ctx: ClientContext): () => void {
       if (id) {
         void fetch(`/api/track/captures/${encodeURIComponent(id)}/promote`, { method: 'POST' })
           .then(refresh)
+      }
+      return
+    }
+    // Pending-confirmation actions: confirm a proposed done/canceled, or
+    // dismiss the proposal (marker cleared; the sweep may re-propose).
+    const confirmBtn = target.closest<HTMLElement>('[data-confirm]')
+    if (confirmBtn !== null) {
+      const id = confirmBtn.getAttribute('data-confirm')
+      const to = confirmBtn.getAttribute('data-to')
+      if (id && (to === 'done' || to === 'canceled')) {
+        void fetch(`/api/track/issues/${encodeURIComponent(id)}/confirm`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ to }),
+        }).then(refresh)
+      }
+      return
+    }
+    const dismissBtn = target.closest<HTMLElement>('[data-dismiss]')
+    if (dismissBtn !== null) {
+      const id = dismissBtn.getAttribute('data-dismiss')
+      if (id) {
+        void fetch(`/api/track/issues/${encodeURIComponent(id)}/dismiss`, { method: 'POST' }).then(refresh)
       }
       return
     }
