@@ -19,7 +19,7 @@ import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type { TrackStripProps } from './strip-contract.ts'
 import { TrackStrip } from './strip.tsx'
 import { en, NS, zh, type TrackKey } from './locales.ts'
-import { mountRightPanel } from './right-panel.ts'
+import { mountRightPanel, openTrackPanel } from './right-panel.ts'
 
 export type { TrackStripProps } from './strip-contract.ts'
 export type { TrackKey } from './locales.ts'
@@ -43,9 +43,12 @@ export function apply(ctx: ClientContext): void {
   const panelDisposer = mountRightPanel(ctx)
   ctx.effect(() => panelDisposer, 'dsh-track: right panel')
 
-  // ---- composer-dock strip (open capture count) ----
+  // ---- composer-dock strip (open capture count + panel entry) ----
+  // The count is fetched live by TrackStrip itself; the injected props only
+  // carry the initial value and the click action (opens the right panel).
   const injectActions = (): TrackStripProps => ({
     captures: 0,
+    onClick: openTrackPanel,
   })
   ctx.slots.inject('conversation.composer.dock', () =>
     ctx.slots.register({

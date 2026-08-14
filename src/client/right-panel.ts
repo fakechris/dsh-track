@@ -402,6 +402,9 @@ const PANEL_CSS = `
 interface HostRefs {
   candidate: HTMLElement
   header: HTMLElement | null
+  /** The header's direct parent when the slot renderer wraps it in a div —
+   *  must span both grid columns so the title/tabs keep full width. */
+  headerWrapper: HTMLElement | null
   scrollBody: HTMLElement | null
   tablist: HTMLElement | null
 }
@@ -612,6 +615,7 @@ function restoreLayout(): void {
   if (host === null) return
   host.candidate.classList.remove('inv-host')
   if (host.header !== null) host.header.classList.remove('inv-host-header')
+  if (host.headerWrapper !== null) host.headerWrapper.classList.remove('inv-host-header')
   if (host.scrollBody !== null) host.scrollBody.classList.remove('inv-host-scroll')
   if (prior.display !== undefined) host.candidate.style.display = prior.display
   if (prior.gridColumns !== undefined) host.candidate.style.gridTemplateColumns = prior.gridColumns
@@ -628,10 +632,21 @@ function setPanelOpen(open: boolean): void {
   else if (host !== null) restoreLayout()
 }
 
-function attach(candidate: HTMLElement, header: HTMLElement | null): void {
+/** Programmatic entry for the composer-dock strip: ensure the host is
+ *  mounted (fresh pages may not have attached yet) and open the panel. */
+export function openTrackPanel(): void {
+  if (host === null) tryMount()
+  setPanelOpen(true)
+}
+
+function attach(candidate: HTMLElement, header: HTMLElement | null, tablist: HTMLElement | null): void {
   if (host?.candidate === candidate) return
   restoreLayout()
-  host = { candidate, header, scrollBody: candidate.querySelector<HTMLElement>('[data-conversation-scroll]'), tablist: candidate.querySelector<HTMLElement>('[role="tablist"]') ?? null }
+  const scrollBody = candidate.querySelector<HTMLElement>('[data-conversation-scroll]')
+  const headerWrapper = header !== null && header.parentElement !== candidate
+    ? header.parentElement
+    : null
+  host = { candidate, header, headerWrapper, scrollBody, tablist }
   prior = {
     display: candidate.style.display,
     gridColumns: candidate.style.gridTemplateColumns,
@@ -639,10 +654,10 @@ function attach(candidate: HTMLElement, header: HTMLElement | null): void {
     flexDirection: candidate.style.flexDirection,
     headerColumn: header?.style.gridColumn,
     headerRow: header?.style.gridRow,
-    scrollColumn: host.scrollBody?.style.gridColumn,
-    scrollRow: host.scrollBody?.style.gridRow,
-    scrollFlex: host.scrollBody?.style.flex,
-    scrollMinWidth: host.scrollBody?.style.minWidth,
+    scrollColumn: scrollBody?.style.gridColumn,
+    scrollRow: scrollBody?.style.gridRow,
+    scrollFlex: scrollBody?.style.flex,
+    scrollMinWidth: scrollBody?.style.minWidth,
   }
   // Grid takeover: mark the conversation root with a class; the injected
   // stylesheet forces the grid with !important so React re-renders cannot
@@ -651,7 +666,11 @@ function attach(candidate: HTMLElement, header: HTMLElement | null): void {
   candidate.classList.add('inv-host')
   candidate.style.gridTemplateColumns = 'minmax(0, 2fr) minmax(0, 1fr)'
   if (header !== null) header.classList.add('inv-host-header')
-  if (host.scrollBody !== null) host.scrollBody.classList.add('inv-host-scroll')
+  // The header may sit inside a slot wrapper div (formal-release layout):
+  // the wrapper is the root's grid item, so IT must span both columns —
+  // the header's own grid placement only applies inside the wrapper.
+  if (headerWrapper !== null) headerWrapper.classList.add('inv-host-header')
+  if (scrollBody !== null) scrollBody.classList.add('inv-host-scroll')
   if (panel !== null) {
     if (panel.isConnected) panel.remove()
     candidate.append(panel)
@@ -666,7 +685,15 @@ let trackTab: HTMLButtonElement | null = null
 
 /** Append an Track tab to the conversation tab strip (side-panel pattern). */
 function mountTab(): void {
-  const tl = host?.tablist
+  if (host === null) return
+  // The session tab strip may render after the first attach (blank session →
+  // active, or React removed our injected tab on a re-render): resolve the
+  // live strip from the candidate instead of trusting the stale ref.
+  let tl = host.tablist
+  if (tl === null || !tl.isConnected) {
+    tl = host.candidate.querySelector<HTMLElement>('[role="tablist"]')
+    if (tl !== null) host.tablist = tl
+  }
   if (tl === null || tl === undefined) return
   if (tl.querySelector('.inv-tab') !== null) return
   const reference = tl.querySelector<HTMLButtonElement>(':scope > button[role="tab"][aria-selected="false"]')
@@ -685,31 +712,43 @@ function mountTab(): void {
   trackTab = tab
 }
 
+/**
+ * Resolve the conversation root hosting the session tab strip.
+ *
+ * The side-panel pattern: find the tablist that contains the session tabs
+ * (Trajectory / 轨迹), climb to its header, then take over the CONVERSATION
+ * ROOT — the ancestor that actually contains `[data-conversation-scroll]`.
+ * Older DSH: `header.parentElement` IS the root. The formal release wraps
+ * the `conversation.session.header` slot in a header-only div, so
+ * `header.parentElement` is a 76px wrapper with no scroll body — taking it
+ * over put the panel in a 0px grid row (the 2026-08-13 "click Track does
+ * nothing" bug). Climbing to the scroll-body ancestor fixes it.
+ */
 function locateHost(): HostRefs | null {
-  // side-panel pattern: find the session tab strip (contains the Trajectory
-  // tab), climb to its header, take over the header's parent (the
-  // conversation root). This is the container side-panel/lazyfish grid-
-  // take over successfully.
+  const sessionTablist = [...document.querySelectorAll<HTMLElement>('[role="tablist"]')]
+    .find((tl) => [...tl.querySelectorAll<HTMLElement>(':scope > button[role="tab"]')]
+      .some((tab) => {
+        const text = tab.textContent?.trim()
+        return text === 'Trajectory' || text === '轨迹'
+      }))
   const tablists = document.querySelectorAll<HTMLElement>('[role="tablist"]')
-  for (const tl of tablists) {
-    const hasSessionTab = [...tl.querySelectorAll<HTMLElement>(':scope > button[role="tab"]')]
-      .some((tab) => tab.textContent?.trim() === 'Trajectory')
-    if (!hasSessionTab) continue
-    const header = tl.closest('header')
+  // Preferred: the session tab strip; fallback: any tablist (multi-tab).
+  const tablist = sessionTablist ?? tablists[0] ?? null
+  if (tablist !== null) {
+    const header = tablist.closest('header')
     if (header instanceof HTMLElement && header.parentElement instanceof HTMLElement) {
-      return {
-        candidate: header.parentElement,
-        header,
-        scrollBody: header.parentElement.querySelector<HTMLElement>('[data-conversation-scroll]'),
-        tablist: tl,
+      // Climb from the header's parent until the candidate contains the
+      // conversation scroll body (bounded — never past the app shell).
+      let candidate: HTMLElement | null = header.parentElement
+      for (let depth = 0; candidate !== null && depth < 6; depth++) {
+        const scrollBody = candidate.querySelector<HTMLElement>('[data-conversation-scroll]')
+        if (scrollBody !== null) {
+          return { candidate, header, headerWrapper: header.parentElement !== candidate ? header.parentElement : null, scrollBody, tablist }
+        }
+        candidate = candidate.parentElement
       }
-    }
-  }
-  // Fallback: any tablist header's parent (multi-tab sessions).
-  for (const tl of tablists) {
-    const header = tl.closest('header')
-    if (header instanceof HTMLElement && header.parentElement instanceof HTMLElement) {
-      return { candidate: header.parentElement, header, scrollBody: header.parentElement.querySelector<HTMLElement>('[data-conversation-scroll]'), tablist: tl }
+      // Legacy fallback: the header's parent as-is.
+      return { candidate: header.parentElement, header, headerWrapper: null, scrollBody: header.parentElement.querySelector<HTMLElement>('[data-conversation-scroll]'), tablist }
     }
   }
   // Fallback: the scroll body's parent (single-tab sessions have no tablist).
@@ -717,19 +756,26 @@ function locateHost(): HostRefs | null {
   if (scroll instanceof HTMLElement && scroll.parentElement instanceof HTMLElement) {
     const root = scroll.parentElement
     const header = root.querySelector<HTMLElement>('header')
-    return { candidate: root, header, scrollBody: scroll, tablist: root.querySelector<HTMLElement>('[role="tablist"]') }
+    return { candidate: root, header, headerWrapper: null, scrollBody: scroll, tablist: root.querySelector<HTMLElement>('[role="tablist"]') }
   }
   return null
 }
 
 function tryMount(): void {
   if (host !== null && host.candidate.isConnected) {
-    // Self-heal: React re-renders reset inline styles; re-apply the takeover
-    // classes and grid columns on every DOM change (lazyfish attach pattern).
+    // Self-heal: React re-renders reset inline styles AND remove the
+    // imperatively-injected tab from the tablist; re-apply everything on
+    // every DOM change (lazyfish attach pattern).
     if (panel !== null && panel.parentElement !== host.candidate) host.candidate.append(panel)
+    // The session tab strip may render AFTER the first attach (blank session
+    // → active): re-resolve it so mountTab always targets the live strip.
+    const liveTablist = host.candidate.querySelector<HTMLElement>('[role="tablist"]')
+    if (liveTablist !== null) host.tablist = liveTablist
     host.candidate.classList.add('inv-host')
     if (host.header !== null) host.header.classList.add('inv-host-header')
+    if (host.headerWrapper !== null) host.headerWrapper.classList.add('inv-host-header')
     if (host.scrollBody !== null) host.scrollBody.classList.add('inv-host-scroll')
+    mountTab()
     syncGrid()
     return
   }
@@ -737,7 +783,7 @@ function tryMount(): void {
   host = null
   const h = locateHost()
   if (h !== null) {
-    attach(h.candidate, h.header)
+    attach(h.candidate, h.header, h.tablist)
     setPanelOpen(readOpenState())
   }
 }
@@ -915,19 +961,29 @@ export function mountRightPanel(ctx: ClientContext): () => void {
   observer.observe(document.body, { childList: true, subtree: true })
   tryMount()
   refresh()
+  // Late-render retries: the session tab strip (and sometimes the whole
+  // conversation root) renders after the first attach; re-run the mount so
+  // the Track tab appears once the strip exists. (MutationObserver only
+  // fires on changes — a settled page never re-triggers it.)
+  const mountRetries = [500, 1500, 3000].map((ms) => window.setTimeout(tryMount, ms))
 
   // ---- light auto-refresh: silently re-poll captures/tasks so new items
   // appear without manual ⟳. Two small GETs every 20s; skipped while the
   // panel is closed. (2026-08-11: user observed the wall never updating.)
+  // tryMount() also runs here so a tab React removed on a re-render is
+  // re-injected within one tick.
   const autoRefresh = window.setInterval(() => {
+    tryMount()
     if (panelOpen && !document.hidden) refresh()
   }, 20000)
-  window.addEventListener('focus', refresh)
+  const onFocus = (): void => { tryMount(); refresh() }
+  window.addEventListener('focus', onFocus)
 
   return () => {
     observer.disconnect()
+    mountRetries.forEach((id) => window.clearTimeout(id))
     window.clearInterval(autoRefresh)
-    window.removeEventListener('focus', refresh)
+    window.removeEventListener('focus', onFocus)
     restoreLayout()
     panel?.remove()
     fab?.remove()

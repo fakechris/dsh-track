@@ -213,6 +213,14 @@ export interface TrackGlobal {
    * lastActivityAt exceeds the cursor, so a re-run is idempotent.
    */
   lastSync?: Record<string, number>
+  /**
+   * Durable auto-capture dedup markers: sessionId → ISO timestamp of when
+   * that session's FIRST todo_write was captured. The auto-observer's
+   * in-memory set dies with the web process; this persisted marker keeps a
+   * continued (spliced) session from re-capturing its first todo after a
+   * restart (the 2026-08-13 duplicate-capture bug).
+   */
+  autoTodoSessions?: Record<string, string>
 }
 
 /**

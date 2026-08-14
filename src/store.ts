@@ -11,6 +11,7 @@
  * @module @fakechris/dsh-track/store
  */
 
+import { createHash } from 'node:crypto'
 import type { KvFacet, KvUnit, KvUnitDescriptor } from '@deepseek-ai/dsh-storage'
 import {
   TRACK_UNIT,
@@ -43,6 +44,31 @@ export function makeId(kind: keyof typeof ID_PREFIX): string {
   return `${ID_PREFIX[kind]}${rand}`
 }
 
+/**
+ * Normalize capture content for dedup: trim and collapse every whitespace
+ * run to a single space, so " 摸清 前提 " and "摸清 前提" hash the same.
+ * Case is preserved — a case-fold would risk merging distinct thoughts
+ * (conservative dedup: only obvious copies collapse).
+ */
+export function normalizeCaptureContent(content: string): string {
+  return content.replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * Stable content hash for capture dedup (sha256 of the normalized content,
+ * first 16 hex chars). Used as the content-level fallback so an identical
+ * thought never lands twice on the capture wall.
+ */
+export function captureContentHash(content: string): string {
+  return createHash('sha256').update(normalizeCaptureContent(content)).digest('hex').slice(0, 16)
+}
+
+/** Result of a dedup-aware capture creation. */
+export type CaptureCreateResult =
+  | { status: 'created'; capture: Capture }
+  /** The capture was not inserted — an equivalent one already exists. */
+  | { status: 'duplicate'; existing?: Capture }
+
 /** One serialized write chain per table keeps KV ordering sane. */
 type WriteChain = Promise<unknown>
 
@@ -56,6 +82,7 @@ export class TrackStore {
 
   /** Open the unit on a kv facet (json or sqlite backend). Call once at plugin apply. */
   open(kvFacet: KvFacet): Promise<void> {
+    if (this.opened) return Promise.resolve()
     this.openPromise ??= kvFacet.open(this.descriptor).then((unit) => {
       this.unit = unit
       this.opened = true
@@ -82,6 +109,9 @@ export class TrackStore {
     if (!this.opened) return
     await this.unit.close()
     this.opened = false
+    // A later open() must mint a fresh unit instead of returning the closed
+    // promise (test harnesses reopen the store on a new backend per case).
+    this.openPromise = null
   }
 
   /** Serialize one write on a table: next write waits for the previous. */
@@ -132,6 +162,85 @@ export class TrackStore {
   await this.ready()
     await this.chain('captures', () =>
       this.unit.putRecord('captures', capture.id, capture))
+  }
+
+  /**
+   * Find an open capture whose normalized content matches `content` — the
+   * content-hash dedup fallback. Only OPEN captures count: promoted/archived
+   * items left the wall, so the same thought resurfacing later is a fresh
+   * instance, not a wall duplicate.
+   */
+  async findOpenCaptureByContent(content: string): Promise<Capture | undefined> {
+  await this.ready()
+    const hash = captureContentHash(content)
+    const caps = await this.listCaptures()
+    return caps.find((c) => c.status === 'open' && captureContentHash(c.content) === hash)
+  }
+
+  /**
+   * Durable per-session "first todo already captured" marker — the fix for
+   * the restart-resurrected observer: the in-memory `todoSeen` set dies with
+   * the web process, so a continued session used to re-capture its first
+   * todo after every restart. The marker lives in the unit global, so it
+   * survives restarts.
+   */
+  async isSessionTodoCaptured(sessionId: string): Promise<boolean> {
+  await this.ready()
+    const g = await this.readGlobal()
+    return g?.autoTodoSessions?.[sessionId] !== undefined
+  }
+
+  /** Persist the per-session todo-capture marker (idempotent). */
+  async markSessionTodoCaptured(sessionId: string): Promise<void> {
+  await this.ready()
+    const g = (await this.readGlobal()) ?? {
+      version: 1 as const,
+      teams: {},
+      identifierCounter: 0,
+    }
+    await this.writeGlobal({
+      ...g,
+      autoTodoSessions: {
+        ...(g.autoTodoSessions ?? {}),
+        [sessionId]: new Date().toISOString(),
+      },
+    })
+  }
+
+  /**
+   * Dedup-aware capture creation — the single gate every capture path
+   * (auto-observer, capture_thought, HTTP panel) goes through.
+   *
+   * Two guards, in order:
+   *  1. `dedupeBySession` (auto-observer only): the durable per-session
+   *     marker — one todo-capture per session even across restarts.
+   *  2. Content hash: an identical open capture (any session) means the
+   *     thought is already on the wall — do not re-insert.
+   *
+   * A duplicate returns `{ status: 'duplicate' }` and inserts nothing, so
+   * callers can surface the existing capture instead of a silent drop.
+   */
+  async createCapture(capture: Capture, opts: { dedupeBySession?: boolean } = {}): Promise<CaptureCreateResult> {
+  await this.ready()
+    if (opts.dedupeBySession && capture.sourceSessionId !== undefined) {
+      // Durable marker hit, OR the session already has a todo-derived capture
+      // (pre-fix sessions have no marker — backfill it so the next restart
+      // dedupes without scanning).
+      const sessionCaps = (await this.listCaptures())
+        .filter((c) => c.sourceSessionId === capture.sourceSessionId)
+      const alreadyTodo = sessionCaps.some((c) => c.source === 'session' && c.tags.includes('todo'))
+      if (await this.isSessionTodoCaptured(capture.sourceSessionId) || alreadyTodo) {
+        await this.markSessionTodoCaptured(capture.sourceSessionId)
+        return { status: 'duplicate', existing: sessionCaps[0] }
+      }
+    }
+    const existing = await this.findOpenCaptureByContent(capture.content)
+    if (existing !== undefined) return { status: 'duplicate', existing }
+    await this.upsertCapture(capture)
+    if (opts.dedupeBySession && capture.sourceSessionId !== undefined) {
+      await this.markSessionTodoCaptured(capture.sourceSessionId)
+    }
+    return { status: 'created', capture }
   }
 
   async getCapture(id: string): Promise<Capture | undefined> {

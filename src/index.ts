@@ -178,7 +178,15 @@ export function apply(ctx: Context, config?: Config) {
         context: prompt?.text,
         createdAt: new Date().toISOString(),
       }
-      await store.upsertCapture(capture)
+      const result = await store.createCapture(capture)
+      if (result.status === 'duplicate') {
+        // Content-hash dedup: an identical thought is already on the wall —
+        // surface the existing capture instead of creating a second row.
+        audit('capture_thought', exec, true, `duplicate of ${result.existing?.id ?? 'capture'}`)
+        return result.existing
+          ? `Already captured: ${result.existing.id} (open) — not re-captured`
+          : 'Already captured (open) — not re-captured'
+      }
       audit('capture_thought', exec, true, capture.id)
       return `Captured: ${capture.id} (open)`
     },
@@ -739,7 +747,10 @@ export function apply(ctx: Context, config?: Config) {
           tags,
           createdAt: new Date().toISOString(),
         }
-        await store.upsertCapture(capture)
+        const result = await store.createCapture(capture)
+        if (result.status === 'duplicate') {
+          json(res, { ok: true, duplicate: true, capture: result.existing ?? capture }); return
+        }
         json(res, { ok: true, capture }); return
       }
       if (req.method === 'GET') { json(res, { captures: await store.listCaptures() }); return }

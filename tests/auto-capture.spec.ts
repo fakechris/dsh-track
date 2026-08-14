@@ -12,12 +12,17 @@ import { Context } from 'cordis'
 import { createAutoCapture } from '../src/capture/observe.ts'
 import type { TrackStore } from '../src/store.ts'
 
-/** Fake store capturing upsertCapture payloads. */
+/** Fake store capturing createCapture payloads. */
 function makeStore() {
   const captures: Array<Record<string, unknown>> = []
   return {
     captures,
     upsertCapture: vi.fn(async (c: Record<string, unknown>) => { captures.push(c) }),
+    // The observer now gates every capture through createCapture (dedup).
+    createCapture: vi.fn(async (c: Record<string, unknown>, _opts?: { dedupeBySession?: boolean }) => {
+      captures.push(c)
+      return { status: 'created', capture: c }
+    }),
   } as unknown as TrackStore & { captures: Array<Record<string, unknown>> }
 }
 
@@ -41,7 +46,7 @@ describe('createAutoCapture', () => {
         { content: 'Server: add routes', status: 'pending' },
       ],
     })
-    expect(store.upsertCapture).toHaveBeenCalledTimes(1)
+    expect(store.createCapture).toHaveBeenCalledTimes(1)
     const cap = store.captures[0]!
     expect(cap.content).toBe('Create feature worktree (feat/right-panel-actions)')
     expect(cap.source).toBe('session')
@@ -58,7 +63,7 @@ describe('createAutoCapture', () => {
 
     emitTool(ctx, 'session-a', 'todo_write', { todos: [{ content: 'first plan' }] })
     emitTool(ctx, 'session-a', 'todo_write', { todos: [{ content: 'updated plan' }] })
-    expect(store.upsertCapture).toHaveBeenCalledTimes(1)
+    expect(store.createCapture).toHaveBeenCalledTimes(1)
     dispose()
   })
 
@@ -69,7 +74,7 @@ describe('createAutoCapture', () => {
 
     emitTool(ctx, 'session-a', 'todo_write', { todos: [{ content: 'plan A' }] })
     emitTool(ctx, 'session-b', 'todo_write', { todos: [{ content: 'plan B' }] })
-    expect(store.upsertCapture).toHaveBeenCalledTimes(2)
+    expect(store.createCapture).toHaveBeenCalledTimes(2)
     dispose()
   })
 
@@ -85,7 +90,7 @@ describe('createAutoCapture', () => {
     emitTool(ctx, 's1', 'bash', { command: 'git checkout -b feat/a' })
     emitTool(ctx, 's2', 'bash', { command: 'git switch -c fix/b' })
     emitTool(ctx, 's1', 'bash', { command: 'git checkout -b main' })
-    expect(store.upsertCapture).not.toHaveBeenCalled()
+    expect(store.createCapture).not.toHaveBeenCalled()
     dispose()
   })
 
@@ -97,7 +102,7 @@ describe('createAutoCapture', () => {
     emitTool(ctx, 's1', 'bash', { command: 'git branch -d feat/gone' })
     emitTool(ctx, 's1', 'bash', { command: 'git checkout feat/existing' })
     ctx.emit('session/event', { id: 's1' }, { type: 'user/message', data: { text: 'hi' } })
-    expect(store.upsertCapture).not.toHaveBeenCalled()
+    expect(store.createCapture).not.toHaveBeenCalled()
     dispose()
   })
 
@@ -108,7 +113,7 @@ describe('createAutoCapture', () => {
 
     ctx.emit('session/event', { id: 's1' }, { type: 'tool/call', data: { name: 'todo_write', arguments: 'not-json{' } })
     ctx.emit('session/event', { id: 's1' }, { type: 'tool/call', data: { name: 'bash', arguments: 'nope' } })
-    expect(store.upsertCapture).not.toHaveBeenCalled()
+    expect(store.createCapture).not.toHaveBeenCalled()
     dispose()
   })
 
@@ -119,7 +124,7 @@ describe('createAutoCapture', () => {
     dispose()
 
     emitTool(ctx, 's1', 'todo_write', { todos: [{ content: 'should not capture' }] })
-    expect(store.upsertCapture).not.toHaveBeenCalled()
+    expect(store.createCapture).not.toHaveBeenCalled()
   })
 
   it('attaches the latest explicit user request as context (A)', () => {
@@ -138,7 +143,7 @@ describe('createAutoCapture', () => {
     })
     emitTool(ctx, 's1', 'todo_write', { todos: [{ content: '调研 StreamChunk usage/token 字段' }] })
 
-    expect(store.upsertCapture).toHaveBeenCalledTimes(1)
+    expect(store.createCapture).toHaveBeenCalledTimes(1)
     const cap = store.captures[0]!
     expect(cap.content).toBe('调研 StreamChunk usage/token 字段')
     expect(cap.context).toContain('记录所有 track 发起的 llm 数据')
