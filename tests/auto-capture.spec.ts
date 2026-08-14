@@ -378,4 +378,143 @@ describe('createAutoCapture', () => {
     expect(store.createCapture).toHaveBeenCalledTimes(1)
     dispose()
   })
+
+  // ---- G1: subagent delegation signal (2026-08-14 audit gap) ----
+
+  it('captures a subagent delegation prompt (subagent/descriptor + first user message)', () => {
+    const ctx = new Context()
+    const store = makeStore()
+    const dispose = createAutoCapture(ctx, { store })
+
+    // A subagent child session starts with a descriptor, then its delegation
+    // prompt arrives as the first user-kind user message.
+    ctx.emit('session/event', { id: 'child-1' }, {
+      type: 'subagent/descriptor',
+      data: { version: 2, mode: 'continuable', provider: 'spawn', label: '调研状态机论文' },
+    })
+    ctx.emit('session/event', { id: 'child-1' }, {
+      type: 'user/message',
+      data: { content: [{ type: 'text', text: '你是研究助理。任务：为一款 AI 编码助手的嵌入式任务管理插件调研相关学术论文，并产出带链接的调研文档。' }], source: { kind: 'user' } },
+    })
+
+    expect(store.createCapture).toHaveBeenCalledTimes(1)
+    const cap = store.captures[0]!
+    expect(cap.content).toContain('你是研究助理。任务：')
+    expect(cap.tags).toContain('delegate')
+    expect(cap.sourceSessionId).toBe('child-1')
+    dispose()
+  })
+
+  it('does NOT delegate-capture normal (non-subagent) sessions', () => {
+    const ctx = new Context()
+    const store = makeStore()
+    const dispose = createAutoCapture(ctx, { store })
+
+    ctx.emit('session/event', { id: 's1' }, {
+      type: 'user/message',
+      data: { content: [{ type: 'text', text: '这是一个普通用户的第一个长消息，没有 descriptor 标记，不应作为委托捕获。' }], source: { kind: 'user' } },
+    })
+    // Not a delegate capture — but it IS a requirement-level message (G2).
+    expect(store.createCapture).toHaveBeenCalledTimes(1)
+    expect(store.captures[0]!.tags).not.toContain('delegate')
+    expect(store.captures[0]!.tags).toContain('requirement')
+    dispose()
+  })
+
+  it('delegation captures once per child session', () => {
+    const ctx = new Context()
+    const store = makeStore()
+    const dispose = createAutoCapture(ctx, { store })
+
+    const childMsg = (text: string) => ctx.emit('session/event', { id: 'child-1' }, {
+      type: 'user/message',
+      data: { content: [{ type: 'text', text }], source: { kind: 'user' } },
+    })
+    ctx.emit('session/event', { id: 'child-1' }, { type: 'subagent/descriptor', data: { label: 'x' } })
+    childMsg('你是研究助理。任务：第一个委托任务，需要完整捕获。')
+    childMsg('你是研究助理。任务：第二个委托任务（应被去重）。')
+    expect(store.createCapture).toHaveBeenCalledTimes(1)
+    dispose()
+  })
+
+  // ---- G2: requirement-level user message signal ----
+
+  it('captures the first requirement-level user message per session (G2)', () => {
+    const ctx = new Context()
+    const store = makeStore()
+    const dispose = createAutoCapture(ctx, { store })
+
+    ctx.emit('session/event', { id: 's1' }, {
+      type: 'user/message',
+      data: { content: [{ type: 'text', text: '嗯，之后我们讨论一下：我们现在已经捕获了很多想法，第一是怎么转任务，第二是任务历史里很多已完成但还是 in progress 的怎么办，整个机制有很多可以讨论的地方。' }], source: { kind: 'user' } },
+    })
+    ctx.emit('session/event', { id: 's1' }, {
+      type: 'user/message',
+      data: { content: [{ type: 'text', text: '第二个同样长的需求消息：应该被 per-session 去重挡住，不产生第二条。' }], source: { kind: 'user' } },
+    })
+
+    expect(store.createCapture).toHaveBeenCalledTimes(1)
+    const cap = store.captures[0]!
+    expect(cap.content).toContain('第一是怎么转任务')
+    expect(cap.tags).toContain('requirement')
+    dispose()
+  })
+
+  it('does NOT capture terse user messages as requirements (below minChars)', () => {
+    const ctx = new Context()
+    const store = makeStore()
+    const dispose = createAutoCapture(ctx, { store })
+
+    ctx.emit('session/event', { id: 's1' }, {
+      type: 'user/message',
+      data: { content: [{ type: 'text', text: '查一下 dsh 机制' }], source: { kind: 'user' } },
+    })
+    expect(store.createCapture).not.toHaveBeenCalled()
+    dispose()
+  })
+
+  // ---- signal mask configuration ----
+
+  it('signal mask: todo off skips todo captures, others still fire', () => {
+    const ctx = new Context()
+    const store = makeStore()
+    const dispose = createAutoCapture(ctx, { store }, { signals: { todo: false } })
+
+    emitTool(ctx, 's1', 'todo_write', { todos: [{ content: '计划 X' }] })
+    expect(store.createCapture).not.toHaveBeenCalled()
+
+    ctx.emit('session/event', { id: 's1' }, {
+      type: 'goal/change',
+      data: { operation: 'create', goal: { id: 'goal-x', objective: '目标 Y：仍然应该被捕获（goal 未关）' } },
+    })
+    expect(store.createCapture).toHaveBeenCalledTimes(1)
+    expect(store.captures[0]!.tags).toContain('goal')
+    dispose()
+  })
+
+  it('signal mask: requirement off skips requirement captures', () => {
+    const ctx = new Context()
+    const store = makeStore()
+    const dispose = createAutoCapture(ctx, { store }, { signals: { requirement: false } })
+
+    ctx.emit('session/event', { id: 's1' }, {
+      type: 'user/message',
+      data: { content: [{ type: 'text', text: '这是一条足够长的需求消息，但 requirement 信号已关闭，不应捕获。' }], source: { kind: 'user' } },
+    })
+    expect(store.createCapture).not.toHaveBeenCalled()
+    dispose()
+  })
+
+  it('requirement thresholds are configurable (custom minChars)', () => {
+    const ctx = new Context()
+    const store = makeStore()
+    const dispose = createAutoCapture(ctx, { store }, { requirement: { minChars: 100 } })
+
+    ctx.emit('session/event', { id: 's1' }, {
+      type: 'user/message',
+      data: { content: [{ type: 'text', text: '中等长度的需求消息，未达到自定义 100 字门槛，不应捕获。' }], source: { kind: 'user' } },
+    })
+    expect(store.createCapture).not.toHaveBeenCalled()
+    dispose()
+  })
 })
