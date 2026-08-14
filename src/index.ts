@@ -150,20 +150,31 @@ export function apply(ctx: Context, config?: Config) {
       // Wire the lifecycle evidence observer (Part B): converts the structured
       // tool stream into evidence for the attached issue of each session.
       lifecycle = createLifecycleObserver(ctx, { store })
-      // Periodic lifecycle sweep (Part B2): the observer only fires for the
-      // attached session, so sync-created issues never accumulate evidence and
-      // their done/canceled proposals would never surface. The sweep re-runs
-      // the state machine over EVERY in_progress issue and persists
-      // `pendingConfirm` for the panel to show. Confirmation stays user-gated.
+      // Auto-maintenance loop (every SWEEP_INTERVAL_MS): three deterministic
+      // passes — (1) lifecycle sweep: re-evaluate EVERY in_progress issue and
+      // persist done/canceled/review proposals as pendingConfirm (confirmation
+      // stays user-gated); (2) capture triage: auto-promote open captures that
+      // ARE an existing issue's exact title (zero LLM); (3) exact-title dup
+      // merge: mechanically cancel duplicate issues into their canonical.
+      // All passes are deterministic and cheap — the LLM-heavy v2 sync stays
+      // manual/on-demand (memory + cost), see docs/auto-maintenance-design.md.
       const runSweep = (): void => {
         void ensureStoreOpen()
-          .then(() => store.sweepLifecycle())
-          .then((s) => {
+          .then(async () => {
+            const s = await store.sweepLifecycle()
             if (s.proposed > 0) {
               console.log(`[dsh-track] sweep: ${s.proposed}/${s.evaluated} in_progress → pending confirmation`)
             }
+            const c = await store.triageCaptures()
+            if (c.promoted > 0 || c.stale > 0) {
+              console.log(`[dsh-track] capture triage: ${c.promoted} promoted, ${c.stale} stale of ${c.open} open`)
+            }
+            const m = await store.autoMergeExactDuplicates()
+            if (m.merged > 0) {
+              console.log(`[dsh-track] dup-merge: ${m.merged} issues merged into ${m.groups} canonical(s)`)
+            }
           })
-          .catch((e) => console.error('[dsh-track] sweep failed:', e))
+          .catch((e) => console.error('[dsh-track] maintenance loop failed:', e))
       }
       runSweep() // first pass right after boot so existing zombies surface
       sweepTimer = setInterval(runSweep, SWEEP_INTERVAL_MS)
@@ -909,6 +920,20 @@ export function apply(ctx: Context, config?: Config) {
         if (!found) { json(res, { error: 'issue not found' }, 404); return }
         await store.dismissPending(found.id)
         json(res, { ok: true, issue: { id: found.id, identifier: found.identifier, state: found.state } }); return
+      }
+      // POST /api/track/issues/:id/merge — merge a duplicate task into its
+      // canonical ({ into: <issue id or identifier> }): union sessions,
+      // cancel the source. User-confirmed (by='user') — the auto loop only
+      // merges EXACT-title duplicates on its own.
+      if (req.method === 'POST' && pathname.endsWith('/merge')) {
+        const body = await readBody(req)
+        const into = typeof body.into === 'string' ? body.into : ''
+        if (!into) { json(res, { error: 'into (canonical issue id/identifier) required' }, 400); return }
+        const source = await store.getIssueByInput(id)
+        const canonical = await store.getIssueByInput(into)
+        if (!source || !canonical) { json(res, { error: 'issue not found' }, 404); return }
+        const merged = await store.mergeIntoCanonical(source.id, canonical.id, 'user')
+        json(res, { ok: true, canonical: { id: merged?.id ?? canonical.id, identifier: merged?.identifier ?? canonical.identifier, state: merged?.state ?? canonical.state } }); return
       }
       if (req.method === 'DELETE') {
         await store.deleteIssue(id)

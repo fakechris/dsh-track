@@ -300,4 +300,59 @@ describe('lifecycle store integration (real json backend)', () => {
     expect(issue.description).toContain('动机')
     expect(issue.description).toContain('因为要出一份调研报告')
   })
+
+  it('mergeIntoCanonical unions sessions and cancels the source (user-confirmed)', async () => {
+    await trackStore.upsertIssue(makeIssue({
+      id: 'track_issue_m1', identifier: 'INV-200', state: 'todo',
+      title: '统一调研任务', linkedSessionIds: ['s-a'],
+    }))
+    await trackStore.upsertIssue(makeIssue({
+      id: 'track_issue_m2', identifier: 'INV-201', state: 'in_progress',
+      title: '统一调研任务的复本', linkedSessionIds: ['s-b'],
+    }))
+    const merged = await trackStore.mergeIntoCanonical('track_issue_m2', 'track_issue_m1', 'user')
+    expect(merged?.linkedSessionIds).toEqual(expect.arrayContaining(['s-a', 's-b']))
+    const src = await trackStore.getIssue('track_issue_m2')
+    expect(src?.state).toBe('canceled')
+    expect(src?.pendingConfirm).toBeUndefined()
+    expect(src?.inferred?.evidence?.some((e) => e.pointer?.includes('INV-200'))).toBe(true)
+  })
+
+  it('triageCaptures auto-promotes title-matched open captures and counts stale', async () => {
+    await trackStore.upsertIssue(makeIssue({
+      id: 'track_issue_tg', identifier: 'INV-202', state: 'todo',
+      title: '查看流量使用情况',
+    }))
+    await trackStore.createCapture({
+      id: 'track_capture_tg1', content: '查看流量使用情况',
+      source: 'session', status: 'open', tags: [],
+      createdAt: new Date().toISOString(),
+    })
+    await trackStore.createCapture({
+      id: 'track_capture_tg2', content: '过期的老想法',
+      source: 'session', status: 'open', tags: [],
+      createdAt: new Date(Date.now() - 20 * 86400_000).toISOString(),
+    })
+    const r = await trackStore.triageCaptures()
+    expect(r.promoted).toBe(1)
+    expect(r.stale).toBeGreaterThanOrEqual(1)
+    const cap = await trackStore.getCapture('track_capture_tg1')
+    expect(cap?.status).toBe('promoted')
+    expect(cap?.promotedToIssueId).toBe('track_issue_tg')
+  })
+
+  it('autoMergeExactDuplicates merges same-title issues into the lowest identifier', async () => {
+    await trackStore.upsertIssue(makeIssue({ id: 'track_issue_d1', identifier: 'INV-210', state: 'todo', title: '重复任务' }))
+    await trackStore.upsertIssue(makeIssue({ id: 'track_issue_d2', identifier: 'INV-211', state: 'in_progress', title: '重复任务', linkedSessionIds: ['s-x'] }))
+    await trackStore.upsertIssue(makeIssue({ id: 'track_issue_d3', identifier: 'INV-212', state: 'todo', title: '重复任务' }))
+    // Give OUR group a unique title: the harness's shared store accumulates
+    // same-default-title issues ('lifecycle'), so exact counts are not stable
+    // — assert on our three issues only.
+    const r = await trackStore.autoMergeExactDuplicates()
+    expect(r.merged).toBeGreaterThanOrEqual(2)
+    const canon = await trackStore.getIssue('track_issue_d1')
+    expect(canon?.linkedSessionIds).toContain('s-x')
+    expect((await trackStore.getIssue('track_issue_d2'))?.state).toBe('canceled')
+    expect((await trackStore.getIssue('track_issue_d3'))?.state).toBe('canceled')
+  })
 })
