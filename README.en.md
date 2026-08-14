@@ -7,7 +7,12 @@ English | [中文](README.md)
 > tasks have a lifecycle. Everything lives inside the harness (session events + storage KV), zero
 > external dependencies.
 
-**Status** Active · **Tests** 342 passing · **Build** `pnpm run build` · **Version** 0.2.1
+**Status** Active · **Tests** 204 passing · **Build** `pnpm run build` · **Version** 0.3.0
+> **v0.3.0 · dedup + panel fixes (2026-08-14)**: no more duplicate entries on the capture wall —
+> `createCapture` is the single gate (durable per-session marker + content-hash fallback, survives
+> restarts); the right panel/tab are fixed (mounted on the real conversation root in the formal-release
+> layout, the Track tab toggles the panel); the composer strip shows the live capture count and opens
+> the panel on click.
 > **v0.2.1 · final-release compatibility (2026-08-12)**: the official final release
 > (snapshots/20260812T172954Z-final-unwatermarked) renamed two surfaces without aliases —
 > `SessionQueryService`→`SessionQueryEngine` (dsh-session-query) and `ctx.httpServer`→`ctx.webServer`

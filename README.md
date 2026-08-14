@@ -5,7 +5,10 @@
 > **DeepSeek Harness 的嵌入式任务管理引擎** —— 把「念头、决策、任务」变成结构化、可追溯、可折叠的数据。
 > 捕获零摩擦，决策留痕迹，任务有生命周期。数据全部在 harness 内部（session 事件 + storage KV），零外部依赖。
 
-**状态** Active · **测试** 342 passing · **构建** `pnpm run build` · **版本** 0.2.1
+**状态** Active · **测试** 204 passing · **构建** `pnpm run build` · **版本** 0.3.0
+> **v0.3.0 · 去重 + 面板修复（2026-08-14）**：捕获墙不再出现重复条目——`createCapture`
+> 统一闸门（持久化 per-session 标记 + 内容哈希兜底，重启后不重捕）；右侧面板/页签修复（正式版 UI
+> 布局下挂载到真实会话根，Track 页签可开合）；底部 strip 显示真实捕获数并可点击打开面板。
 > **v0.2.1 · final 正式版适配（2026-08-12）**：官方正式版（snapshots/20260812T172954Z-final-unwatermarked）
 > 的词汇清洗中两处无别名硬改名——`SessionQueryService`→`SessionQueryEngine`（dsh-session-query）、
 > `ctx.httpServer`→`ctx.webServer`（dsh-host-webserver）——已适配（tsc + 342 测试 + 生产等价冒烟验证）。
