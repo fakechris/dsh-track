@@ -157,6 +157,91 @@ export interface Link {
     kind: 'relates' | 'blocks' | 'derives' | 'belongs';
     createdAt: string;
 }
+/**
+ * M1 event-graph — the deterministic execution tree of one session.
+ *
+ * Nodes cover the conversation's structural facts (turns / steps / tool calls /
+ * user requests / assistant replies); edges express containment (session→turn→
+ * step→tool) and provenance (user message → the turn it provoked). Every node
+ * and edge carries a GraphCitation (sessionId + seq range) that points back
+ * into the raw session.jsonl — the source-of-truth chain for the genealogy
+ * vision (docs/genealogy-vision.md).
+ * @module @fakechris/dsh-track/types
+ */
+/** Node kinds in the per-session execution graph. */
+export type GraphNodeKind = 'session' | 'turn' | 'step' | 'tool' | 'user-message' | 'assistant';
+/** Edge kinds in the per-session execution graph. */
+export type GraphEdgeKind = 'contains' | 'invokes' | 'provoked';
+/** Exact log range a node/edge cites (inclusive). */
+export interface GraphCitation {
+    /** Session owning the cited log range. */
+    sessionId: string;
+    /** First event seq of the source range (inclusive). */
+    seqStart: number;
+    /** Last event seq of the source range (inclusive). */
+    seqEnd: number;
+}
+/** One node of the per-session execution graph. */
+export interface GraphNode {
+    /** Deterministic id (gn_<hash>) — stable across rebuilds of the same log. */
+    id: string;
+    kind: GraphNodeKind;
+    /** Short display title (truncated text / turn label / tool name). */
+    title: string;
+    /** Exact raw-log range this node covers. */
+    citation: GraphCitation;
+    /** Turn number this node belongs to, when derivable. */
+    turn?: number;
+    /** Step number within the turn, when derivable. */
+    step?: number;
+    /** Tool name for kind === 'tool'. */
+    toolName?: string;
+    /** Tool call id — pairs tool/call with tool/result. */
+    callId?: string;
+    /** user/message data.id — the web panel's jump-back target. */
+    messageId?: string;
+    /** Whether the paired tool/result carried an error-ish payload. */
+    toolError?: boolean;
+    /** Header facts on the session root node only. */
+    parentSessionId?: string;
+    origin?: 'subagent';
+    agentLabel?: string;
+    /** Epoch ms when the node's first event occurred. */
+    createdAt: number;
+}
+/** One edge of the per-session execution graph. */
+export interface GraphEdge {
+    /** Deterministic id (ge_<hash>). */
+    id: string;
+    kind: GraphEdgeKind;
+    fromId: string;
+    toId: string;
+    /** Exact raw-log range this edge cites. */
+    citation: GraphCitation;
+}
+/** The complete per-session execution graph — stored under key = sessionId. */
+export interface SessionGraph {
+    /** Session id — also the KV record key. */
+    sessionId: string;
+    /** Header facts (id/cwd/parentSession/origin/delegationDepth/createdAt). */
+    header: {
+        id: string;
+        cwd?: string;
+        parentSession?: string;
+        origin?: 'subagent';
+        delegationDepth?: number;
+        agentPreset?: string;
+        createdAt: number;
+    };
+    nodes: GraphNode[];
+    edges: GraphEdge[];
+    /** Highest event seq folded into the graph. */
+    seqEnd: number;
+    /** Epoch ms when this graph was built. */
+    builtAt: number;
+    /** Builder schema version (bump on breaking shape changes). */
+    version: 1;
+}
 /** Decision point: AI-raised, user-answered, persisted to the KV decisions table. */
 export interface Decision {
     id: string;
@@ -225,6 +310,10 @@ export interface TrackGlobal {
      * web process and caused re-captures after every restart).
      */
     autoRequirementSessions?: Record<string, string>;
+    /** Durable per-session event-graph build marker: sessionId → ISO build time.
+     *  Progress/observability only — freshness is judged by the stored graph's
+     *  seqEnd vs the log length, so a stale marker never blocks a rebuild. */
+    graphBuiltSessions?: Record<string, string>;
     /** Runtime-tunable auto-maintenance knobs (defaults when absent). */
     config?: TrackConfig;
 }
@@ -259,7 +348,7 @@ export declare const DEFAULT_TRACK_CONFIG: TrackConfig;
 export interface AuditEntry {
     id: string;
     /** The tool that ran: capture_thought | report_decision_point | track_create_issue | track_sync_history | track_usage | track_backfill_captures | track_respond_decision | track_list_decisions | track_attach_issue | track_update_issue_state | track_issue_evidence. */
-    tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history' | 'track_usage' | 'track_backfill_captures' | 'track_respond_decision' | 'track_list_decisions' | 'track_attach_issue' | 'track_update_issue_state' | 'track_issue_evidence';
+    tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history' | 'track_usage' | 'track_backfill_captures' | 'track_respond_decision' | 'track_list_decisions' | 'track_attach_issue' | 'track_update_issue_state' | 'track_issue_evidence' | 'track_session_graph';
     /** Epoch ms of the invocation. */
     ts: number;
     /** Owning agent session id when available. */
@@ -310,6 +399,6 @@ export interface LlmUsageRecord {
 export declare const TRACK_UNIT: {
     readonly name: "track";
     readonly version: 1;
-    readonly tables: readonly ["captures", "issues", "epics", "links", "decisions", "audit", "usage"];
+    readonly tables: readonly ["captures", "issues", "epics", "links", "decisions", "audit", "usage", "graph"];
     readonly hasGlobal: true;
 };

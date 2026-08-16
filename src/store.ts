@@ -26,6 +26,7 @@ import {
   type Link,
   type LlmUsageRecord,
   type EvidenceRef,
+  type SessionGraph,
 } from './types.ts'
 import { MAX_EVIDENCE, isAutoCommit, nextInferred, sweepProposal } from './lifecycle/state-machine.ts'
 
@@ -770,6 +771,44 @@ export class TrackStore {
   await this.ready()
     const links = await this.listLinks()
     return links.filter((l) => l.fromId === id || l.toId === id)
+  }
+  // ---- session execution graphs (M1 genealogy floor) ----
+
+  /** Persist (or replace) the execution graph of one session. Idempotent:
+   *  the deterministic builder produces the same nodes/edges for the same log. */
+  async upsertGraph(graph: SessionGraph): Promise<void> {
+  await this.ready()
+    await this.chain('graph', () => this.unit.putRecord('graph', graph.sessionId, graph))
+  }
+
+  async getGraph(sessionId: string): Promise<SessionGraph | undefined> {
+  await this.ready()
+    const { tables } = await this.unit.loadAll()
+    return (tables.graph ?? {})[sessionId] as SessionGraph | undefined
+  }
+
+  /** All stored session graphs (for status / build-all reporting). */
+  async listGraphs(): Promise<SessionGraph[]> {
+  await this.ready()
+    const { tables } = await this.unit.loadAll()
+    return Object.values(tables.graph ?? {}) as SessionGraph[]
+  }
+
+  /** Persist the per-session graph-built marker (observability only). */
+  async markGraphBuilt(sessionId: string, at = new Date().toISOString()): Promise<void> {
+  await this.ready()
+    const g = (await this.readGlobal()) ?? {
+      version: 1 as const,
+      teams: {},
+      identifierCounter: 0,
+    }
+    await this.writeGlobal({
+      ...g,
+      graphBuiltSessions: {
+        ...(g.graphBuiltSessions ?? {}),
+        [sessionId]: at,
+      },
+    })
   }
 
   // ---- audit (observability) ----

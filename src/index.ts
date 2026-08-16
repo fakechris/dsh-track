@@ -29,6 +29,8 @@ import { createUsageRecorder, formatUsageReport, summarizeUsage } from './usage.
 import { createLifecycleObserver } from './lifecycle/observe.ts'
 import { evidenceWeight, describeEvidence } from './lifecycle/state-machine.ts'
 import type { SyncOptions, SyncReport, SyncDeps as SyncReportDeps } from './sync/run.ts'
+import { ensureSessionGraph, buildWorkspaceGraphs, type GraphServiceDeps } from './graph/service.ts'
+import { renderGraphSummary, renderGraphText } from './graph/render.ts'
 
 export const name = '@fakechris/dsh-track'
 export const inject = ['tools', 'storage']
@@ -123,7 +125,7 @@ export function apply(ctx: Context, config?: Config) {
   // Observability: one audit row per model-facing tool call so funnel
   // questions are answered by the store, not by session-log archaeology.
   // Fire-and-forget: audit must never break the tool's real work.
-  const audit = (tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history' | 'track_usage' | 'track_backfill_captures' | 'track_respond_decision' | 'track_list_decisions' | 'track_attach_issue' | 'track_update_issue_state' | 'track_issue_evidence', exec: { agent?: { id?: string } }, ok: boolean, detail?: string): void => {
+  const audit = (tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history' | 'track_usage' | 'track_backfill_captures' | 'track_respond_decision' | 'track_list_decisions' | 'track_attach_issue' | 'track_update_issue_state' | 'track_issue_evidence' | 'track_session_graph', exec: { agent?: { id?: string } }, ok: boolean, detail?: string): void => {
     void ensureStoreOpen()
       .then(() => store.appendAudit({
         id: makeId('audit'),
@@ -764,6 +766,56 @@ export function apply(ctx: Context, config?: Config) {
     presentCall: () => ({ card: 'generic', title: 'Backfill capture contexts', kind: 'other', rawInput: 'all legacy open captures' }),
   }))
 
+  // ---- track_session_graph: build/read the execution graph of a session ----
+  // M1 of the genealogy vision (docs/genealogy-vision.md): the deterministic
+  // session→turn→step→tool tree with seq citations, persisted in the graph
+  // table. Reads raw logs through the session-query service (web profile).
+  ctx.tools.register(defineTool({
+    name: 'track_session_graph',
+    description:
+      'Build and read the execution graph (会话结构图) of a session: the deterministic '
+      + 'tree of turns, steps and tool calls with seq citations, plus header facts '
+      + '(parent session / subagent origin). With workspace= it batch-builds graphs '
+      + 'for that workspace\'s sessions (bounded by max_sessions) and reports counts. '
+      + 'Every node and edge carries a (sessionId, seq) citation back into the raw '
+      + 'session log. Use when the user asks to expand a session\'s execution tree, '
+      + 'see what a session did, or turn past sessions into a graph.',
+    parameters: {
+      session_id: { type: 'string', description: 'Session id to build/read. Required unless workspace= is given.' },
+      workspace: { type: 'string', description: 'Workspace cwd to batch-build graphs for (bounded by max_sessions).' },
+      max_sessions: { type: 'integer', description: 'Cap for workspace batch builds (default 200).' },
+      rebuild: { type: 'boolean', description: 'Force a rebuild even when a fresh graph exists (default false).' },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    async execute(args, exec) {
+      if (!exec.agent) {
+        throw new Error('track_session_graph requires an owning agent session')
+      }
+      const sessionQuery = getSessionQuery(ctx)
+      if (!sessionQuery) {
+        throw new Error('track_session_graph requires the session-query service (mounted by the web profile)')
+      }
+      await ensureStoreOpen()
+      const deps = { sessionQuery: sessionQuery as GraphServiceDeps['sessionQuery'], store }
+      if (args.workspace !== undefined) {
+        const result = await buildWorkspaceGraphs(deps, args.workspace, args.max_sessions)
+        audit('track_session_graph', exec, true, 'workspace build: ' + result.built + ' built / ' + result.skipped + ' fresh / ' + result.failed + ' failed')
+        return 'Session graph build for ' + args.workspace + ' — ' + result.total + ' session(s) scanned: '
+          + result.built + ' built, ' + result.skipped + ' already fresh, ' + result.failed + ' failed.'
+      }
+      if (typeof args.session_id !== 'string' || args.session_id === '') {
+        throw new Error('track_session_graph needs session_id= or workspace=')
+      }
+      const graph = await ensureSessionGraph(deps, args.session_id, args.rebuild ?? false)
+      audit('track_session_graph', exec, true, graph.sessionId)
+      return renderGraphSummary(graph) + '\n\n' + renderGraphText(graph)
+    },
+    presentCall: (args) => ({ card: 'generic', title: 'Session graph', kind: 'other', rawInput: args.session_id ?? args.workspace ?? '' }),
+  }))
+
   // ---- rule-based auto-capture: todo_write + git branch signals ----
   // Zero-cost determinism (no LLM): the capture_thought tool almost never
   // fires on its own (~1/148 measured), so the store also listens to the
@@ -1049,6 +1101,52 @@ export function apply(ctx: Context, config?: Config) {
       } catch (e) {
         json(res, { ok: false, error: e instanceof Error ? e.message : String(e) }, 500)
       }
+    })
+    // ---- session execution graphs (M1 genealogy floor) ----
+    // GET  /api/track/graph?sessionId= — the stored graph (doc null when not built).
+    // POST /api/track/graph { sessionId, rebuild? } — build and return it.
+    // POST /api/track/graph/build-all { cwd, max_sessions? } — batch build a workspace.
+    registerRoute('/graph', async (req, res) => {
+      await ensureStoreOpen()
+      const url = new URL(req.url ?? '/', 'http://x')
+      if (req.method === 'GET') {
+        const sessionId = url.searchParams.get('sessionId')
+        if (!sessionId) { json(res, { error: 'sessionId required' }, 400); return }
+        const doc = await store.getGraph(sessionId)
+        json(res, { ok: true, doc: doc ?? null })
+        return
+      }
+      if (req.method === 'POST') {
+        const body = await readBody(req)
+        const sessionId = typeof body.sessionId === 'string' ? body.sessionId : url.searchParams.get('sessionId')
+        if (!sessionId) { json(res, { error: 'sessionId required' }, 400); return }
+        const sessionQuery = getSessionQuery(ctx)
+        if (!sessionQuery) { json(res, { error: 'session-query service unavailable (web profile only)' }, 503); return }
+        const graph = await ensureSessionGraph(
+          { sessionQuery: sessionQuery as GraphServiceDeps['sessionQuery'], store },
+          sessionId,
+          body.rebuild === true,
+        )
+        json(res, { ok: true, doc: graph })
+        return
+      }
+      json(res, { error: 'method not allowed' }, 405)
+    })
+    registerRoute('/graph/build-all', async (req, res) => {
+      await ensureStoreOpen()
+      if (req.method !== 'POST') { json(res, { error: 'method not allowed' }, 405); return }
+      const sessionQuery = getSessionQuery(ctx)
+      if (!sessionQuery) { json(res, { error: 'session-query service unavailable (web profile only)' }, 503); return }
+      const body = await readBody(req)
+      const cwd = typeof body.cwd === 'string' ? body.cwd : ''
+      if (!cwd) { json(res, { error: 'cwd required' }, 400); return }
+      const max = typeof body.max_sessions === 'number' ? body.max_sessions : 200
+      const result = await buildWorkspaceGraphs(
+        { sessionQuery: sessionQuery as GraphServiceDeps['sessionQuery'], store },
+        cwd,
+        max,
+      )
+      json(res, { ok: true, result })
     })
   })
 }

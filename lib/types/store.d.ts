@@ -11,7 +11,7 @@
  * @module @fakechris/dsh-track/store
  */
 import type { KvFacet, KvUnitDescriptor } from '@deepseek-ai/dsh-storage';
-import { type AuditEntry, type Capture, type Decision, type Epic, type TrackGlobal, type TrackConfig, type Issue, type Link, type LlmUsageRecord, type EvidenceRef } from './types.ts';
+import { type AuditEntry, type Capture, type Decision, type Epic, type TrackGlobal, type TrackConfig, type Issue, type Link, type LlmUsageRecord, type EvidenceRef, type SessionGraph } from './types.ts';
 /** Open captures older than this are reported as stale by the auto-maintenance
  *  loop (they should be promoted, archived, or deleted). */
 export declare const STALE_CAPTURE_MS: number;
@@ -245,6 +245,14 @@ export declare class TrackStore {
     upsertLink(link: Link): Promise<void>;
     /** All links touching one entity id (either direction). */
     linksFor(id: string): Promise<Link[]>;
+    /** Persist (or replace) the execution graph of one session. Idempotent:
+     *  the deterministic builder produces the same nodes/edges for the same log. */
+    upsertGraph(graph: SessionGraph): Promise<void>;
+    getGraph(sessionId: string): Promise<SessionGraph | undefined>;
+    /** All stored session graphs (for status / build-all reporting). */
+    listGraphs(): Promise<SessionGraph[]>;
+    /** Persist the per-session graph-built marker (observability only). */
+    markGraphBuilt(sessionId: string, at?: string): Promise<void>;
     appendAudit(entry: AuditEntry): Promise<void>;
     listAudit(): Promise<AuditEntry[]>;
     /** Append one LLM usage record (append-only ledger, one per real request). */
