@@ -16,6 +16,9 @@ export declare function graphNodeId(sessionId: string, kind: string, key: string
 /** Deterministic edge id — (kind, from, to) only, so the same logical edge
  *  dedupes across rebuilds regardless of the seq it was first seen at. */
 export declare function graphEdgeId(sessionId: string, kind: string, fromId: string, toId: string): string;
+/** Builder schema version — bump on shape changes; stored graphs older than
+ *  this are stale and get rebuilt (service freshness check). */
+export declare const GRAPH_VERSION = 2;
 /**
  * Build the execution graph of one session from its raw log.
  * @param sessionId session id (also the graph record key).

@@ -50,6 +50,10 @@ function resultIsError(data: unknown): boolean {
 
 const cite = (sessionId: string, a: number, b: number): GraphCitation => ({ sessionId, seqStart: a, seqEnd: b })
 
+/** Builder schema version — bump on shape changes; stored graphs older than
+ *  this are stale and get rebuilt (service freshness check). */
+export const GRAPH_VERSION = 2
+
 interface BuilderState {
   sessionId: string
   nodes: Map<string, GraphNode>
@@ -289,6 +293,6 @@ export function buildSessionGraph(
     seqEnd: st.maxSeq,
     lastActivityAt: st.maxTime > 0 ? st.maxTime : now,
     builtAt: now,
-    version: 1,
+    version: GRAPH_VERSION,
   }
 }

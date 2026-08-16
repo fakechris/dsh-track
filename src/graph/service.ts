@@ -9,7 +9,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionQueryEngine } from '@deepseek-ai/dsh-session-query'
 import type { TrackStore } from '../store.ts'
 import type { SessionGraph } from '../types.ts'
-import { buildSessionGraph } from './build.ts'
+import { buildSessionGraph, GRAPH_VERSION } from './build.ts'
 
 /** What the graph service needs from the harness + store. */
 export interface GraphServiceDeps {
@@ -45,7 +45,7 @@ export async function ensureSessionGraph(
   const snap = await deps.sessionQuery.readSession(sessionId as SessionId)
   if (!rebuild) {
     const existing = await deps.store.getGraph(sessionId)
-    if (existing !== undefined && existing.seqEnd >= logSeqEnd(snap.events)) return existing
+    if (existing !== undefined && existing.seqEnd >= logSeqEnd(snap.events) && existing.version >= GRAPH_VERSION) return existing
   }
   const graph = buildSessionGraph(sessionId, snap.events, snap.session, now)
   await deps.store.upsertGraph(graph)
@@ -71,7 +71,7 @@ export async function buildWorkspaceGraphs(
     try {
       const snap = await deps.sessionQuery.readSession(rec.header.id)
       const existing = await deps.store.getGraph(rec.header.id)
-      if (existing !== undefined && existing.seqEnd >= logSeqEnd(snap.events)) {
+      if (existing !== undefined && existing.seqEnd >= logSeqEnd(snap.events) && existing.version >= GRAPH_VERSION) {
         result.skipped += 1; continue
       }
       const graph = buildSessionGraph(rec.header.id, snap.events, snap.session, now)

@@ -303,7 +303,7 @@ export interface SessionGraph {
   /** Epoch ms when this graph was built. */
   builtAt: number
   /** Builder schema version (bump on breaking shape changes). */
-  version: 1
+  version: number
 }
 
 /** Decision point: AI-raised, user-answered, persisted to the KV decisions table. */
