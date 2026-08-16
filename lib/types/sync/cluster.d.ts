@@ -34,6 +34,8 @@ export interface IssueCandidate {
     /** Semantic node kind (requirement/problem/decision/...) — mapped from the
      *  v2 candidate kind; absent on v1 rule candidates. */
     semanticKind?: 'requirement' | 'problem' | 'decision' | 'task' | 'investigation';
+    /** Source authority (invariant #3) — mapped from the v2 candidate authority. */
+    origin?: 'user_explicit' | 'user_confirmed' | 'agent_proposed' | 'system_inferred';
 }
 /** An epic candidate: a work thread grouping one or more sessions. */
 export interface EpicCandidate {

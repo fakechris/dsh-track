@@ -141,6 +141,27 @@ describe('semantic links', () => {
     expect(decSup?.eventTime).toBe(Date.parse('2026-08-02T00:00:00Z'))
   })
 
+  it('carries linkMethod on edges and persists extraction runs', async () => {
+    const links = await store.listLinks()
+    const executed = links.find((l) => l.kind === 'executed-in')!;
+    expect(executed.linkMethod).toBe('session-link')
+    const fork = links.find((l) => l.kind === 'forked-from')!;
+    expect(fork.linkMethod).toBe('session-lineage')
+    const run = {
+      id: 'track_extract_t1',
+      workspace: '/ws/alpha',
+      engine: 'v2' as const,
+      model: 'deepseek-v4-flash',
+      scannedSessions: 1,
+      spanCount: 1,
+      candidates: [{ id: 'cand_x', sessionId: 'g-sess-1', seqStart: 1, seqEnd: 5, kind: 'implementation', authority: 'user_explicit', title: '实现 X', confidence: 0.8 }],
+      createdAt: new Date().toISOString(),
+    }
+    await store.upsertExtraction(run)
+    const back = await store.listExtractions(5)
+    expect(back.some((x) => x.id === 'track_extract_t1')).toBe(true)
+  })
+
   it('dry-run previews counts without writing', async () => {
     const before = (await store.listLinks()).length
     const preview = await writeSemanticLinks(store, true)

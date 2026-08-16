@@ -210,3 +210,31 @@ M2 落地顺序（按用户建议：先证据指针，后图存储，可视化�
 - M3.5（本轮）：演化边 supersedes（decision/issue）+ Link bi-temporal 时间戳（eventTime/ingestedAt）
 - M4：语义图可视化（需求↔决策↔commit 图、项目分组、derivation tree）+ 社区检测项目归纳
 - M5：MCP server 反哺 + 复盘叙事
+
+---
+
+## 8. 第二份 research 评审（2026-08-16）—— Ledger & Assertion 原则
+
+第二份深度报告（Evolution Ledger/Graph、Claim/Relation assertion、12 条不变量）评审：
+
+### 采纳（M4 落地）
+1. 账本 vs 投影：TaskCandidate/EvidenceSpan 目前是一次性中间产物，需持久化 extraction run——
+   语义理解不能只当导入过程，要成为长期知识资产。
+2. 边 = evidence-backed assertion：Link 加 linkMethod（deterministic / commit-window / title-overlap / user）。
+3. 来源权威分离：Issue 加 origin（user_explicit / user_confirmed / agent_proposed / system_inferred），对应不变量 #3。
+4. Decision 补 QOC 的 Criteria（选项评估标准），与现有 options/rationale 合成 QOC+ADR。
+5. 多父 DAG：Link 表天然是 DAG（需求可 belong 多项目），parentId 只是主显示边，不做树强约束。
+
+### 已覆盖/过时（M2-M3 已完成）
+- Link 端点已含 decision/commit/project + 7 种边（报告写于 M2 之前，已过时）
+- Epic 4（Git/Entire 链接）= M3；任意 Issue 回答 why = citations + promptMessageId
+- 不变量 #1/#2/#6/#9/#11 已满足
+
+### 不采纳
+- SQLite 自研图引擎 / Graphiti 主库：当前 KV 量级够用；量级到后用 harness 的 sqlite backend。
+- Episode/Claim 全套泛化：Issue + citations 已覆盖窄链（用户原话→动机→需求→Issue→Session→Commit→验证）。
+
+### 路线图更新
+- M4（本轮）：Ledger & Assertion 加固——extraction run 持久化 + linkMethod + origin + Decision criteria
+- M5：Lens UI——Why/lineage 视图优先（不做全局力导向图），时间轴/项目谱系/决策地图随后
+- M6：Evolution Brief——plan 前生成项目意图简报 + 缺口检测（proposed 输出）

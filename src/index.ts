@@ -286,6 +286,7 @@ export function apply(ctx: Context, config?: Config) {
       my_preference: { type: 'string', required: true, description: 'Your preferred option.' },
       rationale: { type: 'string', required: true, description: 'Why you prefer it.' },
       impact: { type: 'string', description: 'What choosing your preference means.' },
+      criteria: { type: 'array', items: { type: 'string' }, description: 'QOC evaluation criteria — the yardsticks used to pick the option (cost, complexity, privacy, coupling...).' },
       need: { type: 'string', enum: ['confirm', 'choose', 'supplement'], description: 'confirm: approve my preference; choose: pick an option; supplement: give me more info.' },
     },
     output: {
@@ -306,6 +307,7 @@ export function apply(ctx: Context, config?: Config) {
         aiPreference: args.my_preference,
         aiRationale: args.rationale,
         impact: args.impact ?? '',
+        criteria: args.criteria,
         need: args.need ?? 'confirm',
         status: 'pending',
         context: prompt?.text,
@@ -1295,6 +1297,14 @@ export function apply(ctx: Context, config?: Config) {
         results.push({ cwd, result: await scanProjectCommits(store, cwd, { dryRun, limit }) })
       }
       json(res, { ok: true, dryRun, results })
+    })
+    // GET /api/track/extractions[?limit=] — durable extraction runs.
+    registerRoute('/extractions', async (req, res) => {
+      await ensureStoreOpen()
+      const url = new URL(req.url ?? '/', 'http://x')
+      const limitRaw = url.searchParams.get('limit')
+      const limit = limitRaw !== null && /^\d+$/.test(limitRaw) ? Number(limitRaw) : 20
+      json(res, { extractions: await store.listExtractions(limit) })
     })
     // GET /api/track/commits?projectId= — scanned commit artifacts.
     registerRoute('/commits', async (req, res) => {

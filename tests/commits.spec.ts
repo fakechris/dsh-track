@@ -72,6 +72,10 @@ describe('scanProjectCommits', () => {
     // bi-temporal: landed-in carries the commit author date as eventTime.
     const landed = links.find((l) => l.kind === 'landed-in' && l.fromId === 'c-sess-1')!;
     expect(landed.eventTime).toBe(1500)
+    expect(landed.linkMethod).toBe('commit-window')
+    const impl = links.find((l) => l.kind === 'implements' && l.fromId === 'track_issue_c1')!;
+    // The commit falls inside the issue's session window → commit-window method.
+    expect(impl.linkMethod).toBe('commit-window')
     expect(links.some((l) => l.kind === 'implements' && l.fromType === 'issue' && l.fromId === 'track_issue_c1' && l.toType === 'commit')).toBe(true)
     expect((await store.listCommits()).some((c) => c.sha === SHA)).toBe(true)
   })

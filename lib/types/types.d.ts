@@ -89,6 +89,13 @@ export interface Issue {
      */
     semanticKind?: 'requirement' | 'problem' | 'decision' | 'task' | 'investigation';
     /**
+     * Source authority (invariant #3): where the requirement's content came from.
+     * user_explicit — verbatim user intent; user_confirmed — user accepted a
+     * proposal; agent_proposed — the model suggested it (only proposed, never
+     * treated as confirmed); system_inferred — deterministic rules.
+     */
+    origin?: 'user_explicit' | 'user_confirmed' | 'agent_proposed' | 'system_inferred';
+    /**
      * Evidence pointers back to Layer 0 (the raw session log): every semantic
      * edge/claim must cite its source (sessionId, seqRange) so the graph stays
      * explainable. The first citation is also stored as sourceSpan.
@@ -197,6 +204,8 @@ export interface Link {
     eventTime?: number;
     /** When track ingested this relation (ingestion time, ISO). Defaults to createdAt. */
     ingestedAt?: string;
+    /** How this edge was derived: deterministic | identity | commit-window | title-overlap | user. */
+    linkMethod?: string;
 }
 /**
  * M1 event-graph — the deterministic execution tree of one session.
@@ -328,6 +337,8 @@ export interface Decision {
     };
     /** Id of a previous decision of the same topic that this one supersedes. */
     supersedesDecisionId?: string;
+    /** QOC evaluation criteria — the yardsticks used to pick the option (cost, complexity, privacy...). */
+    criteria?: string[];
     createdAt: string;
 }
 /** Engine metadata stored in the KV global slot. */
@@ -483,10 +494,40 @@ export interface CommitArtifact {
     subject: string;
     createdAt: string;
 }
+/**
+ * One extraction run — the durable record of what the sync pipeline inferred
+ * (Ledger-first: candidates are knowledge, not throwaway intermediates).
+ * Keeps a compact projection of the candidates so a re-run never loses the
+ * richer intermediate view that got flattened into Issues.
+ */
+export interface ExtractionRun {
+    /** Deterministic id: track_extract_<hash(workspace, at)>. */
+    id: string;
+    /** Workspace cwd the run scanned. */
+    workspace: string;
+    /** Sync engine ('v1' | 'v2'). */
+    engine: 'v1' | 'v2';
+    /** Model route used for LLM synthesis, when any. */
+    model?: string;
+    scannedSessions: number;
+    spanCount: number;
+    /** Compact candidate projection: id, span, kind, authority, title, confidence. */
+    candidates: Array<{
+        id: string;
+        sessionId: string;
+        seqStart: number;
+        seqEnd: number;
+        kind: string;
+        authority: string;
+        title: string;
+        confidence: number;
+    }>;
+    createdAt: string;
+}
 /** KV unit descriptor for the track unit. */
 export declare const TRACK_UNIT: {
     readonly name: "track";
     readonly version: 1;
-    readonly tables: readonly ["captures", "issues", "epics", "links", "decisions", "audit", "usage", "graph", "projects", "commits"];
+    readonly tables: readonly ["captures", "issues", "epics", "links", "decisions", "audit", "usage", "graph", "projects", "commits", "extractions"];
     readonly hasGlobal: true;
 };
