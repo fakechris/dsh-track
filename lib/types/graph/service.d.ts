@@ -51,3 +51,26 @@ export interface RelatedSessions {
     children: RelatedSession[];
 }
 export declare function relatedSessions(store: TrackStore, sessionId: string): Promise<RelatedSessions>;
+/**
+ * Project-level graph view (for the visual 会话结构图 tab): nodes = sessions
+ * / issues / commits / decisions; edges = forked-from / executed-in /
+ * landed-in / implements / raised-in. Deterministic, capped for layout.
+ */
+export interface GraphViewNode {
+    id: string;
+    kind: 'session' | 'issue' | 'commit' | 'decision';
+    label: string;
+    sessionId?: string;
+    messageId?: string;
+    state?: string;
+}
+export interface GraphViewEdge {
+    from: string;
+    to: string;
+    kind: string;
+}
+export interface GraphViewData {
+    nodes: GraphViewNode[];
+    edges: GraphViewEdge[];
+}
+export declare function projectGraphView(store: TrackStore, projectId?: string): Promise<GraphViewData>;

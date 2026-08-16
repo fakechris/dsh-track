@@ -1,8 +1,9 @@
-# HANDOFF — M5 Why/lineage 谱系视图部署（2026-08-16）
+# HANDOFF — M6/M7 + 面板重构部署（2026-08-16）
 
-## M5 内容
+## 内容
 
 ## 验收结果（最终）
-- /api/track/lineage：INV-122 → 41 邻居 / 38 实现 commit / 演化边；INV-153（v2 sync 产出）→ 证据链含真实会话 seq 区间与用户消息
-- 面板「谱系」按钮（硬刷新可见）
-- 分支已 push（M1-M5，PR #74）
+- M7 brief：dsh-involute 11 issues（9 done/2 canceled）、1 开放决策、8 commits、缺口[unresolved-question]（正式版 DSH 迁移怎么执行？）
+- M6 related：子代理会话 2800eb34 → parent=session-d1aa4d37
+- 面板「会话结构图」全宽 tab（硬刷新可见）
+- 分支已 push（M1-M7，PR #74）

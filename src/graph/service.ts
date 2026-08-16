@@ -118,3 +118,61 @@ export async function relatedSessions(store: TrackStore, sessionId: string): Pro
   }
   return { parent: parentInfo, children }
 }
+
+/**
+ * Project-level graph view (for the visual 会话结构图 tab): nodes = sessions
+ * / issues / commits / decisions; edges = forked-from / executed-in /
+ * landed-in / implements / raised-in. Deterministic, capped for layout.
+ */
+export interface GraphViewNode {
+  id: string
+  kind: 'session' | 'issue' | 'commit' | 'decision'
+  label: string
+  sessionId?: string
+  messageId?: string
+  state?: string
+}
+export interface GraphViewEdge { from: string; to: string; kind: string }
+export interface GraphViewData { nodes: GraphViewNode[]; edges: GraphViewEdge[] }
+export async function projectGraphView(store: TrackStore, projectId?: string): Promise<GraphViewData> {
+  const graphs = await store.listGraphs()
+  const issues = await store.listIssues()
+  const commits = await store.listCommits(projectId)
+  const decisions = await store.listDecisions()
+  const links = await store.listLinks()
+  let sessionIds: Set<string>
+  if (projectId) {
+    const p = await store.getProject(projectId)
+    const path = p?.path
+    sessionIds = new Set(graphs.filter((g) => g.header.cwd === path).map((g) => g.sessionId))
+  } else {
+    sessionIds = new Set(graphs.map((g) => g.sessionId))
+  }
+  const sessionNodes = graphs.filter((g) => sessionIds.has(g.sessionId)).slice(0, 40).map((g) => {
+    const root = g.nodes.find((n) => n.kind === 'session')
+    return { id: 's:' + g.sessionId, kind: 'session' as const, label: (root?.title ?? g.sessionId).slice(0, 32), sessionId: g.sessionId }
+  })
+  const sessionSet = new Set(sessionNodes.map((n) => n.sessionId))
+  const issueNodes = issues.filter((i) => (i.linkedSessionIds ?? []).some((s) => sessionSet.has(s))).slice(0, 60).map((i) => ({
+    id: 'i:' + i.id, kind: 'issue' as const, label: (i.identifier + ' ' + i.title).slice(0, 28),
+    sessionId: i.linkedSessionIds?.[0], messageId: i.promptMessageId, state: i.state,
+  }))
+  const commitNodes = commits.slice(0, 40).map((c) => ({ id: 'c:' + c.id, kind: 'commit' as const, label: c.sha.slice(0, 8) }))
+  const decisionNodes = decisions.filter((d) => d.sessionId !== undefined && sessionSet.has(d.sessionId)).slice(0, 20).map((d) => ({
+    id: 'd:' + d.id, kind: 'decision' as const, label: d.question.slice(0, 26), sessionId: d.sessionId,
+  }))
+  const nodes: GraphViewNode[] = [...sessionNodes, ...issueNodes, ...commitNodes, ...decisionNodes]
+  const nodeIds = new Set(nodes.map((n) => n.id))
+  const edges: GraphViewEdge[] = []
+  const addEdge = (from: string, to: string, kind: string): void => { if (nodeIds.has(from) && nodeIds.has(to)) edges.push({ from, to, kind }) }
+  for (const g of graphs) {
+    if (g.header.parentSession !== undefined && sessionSet.has(g.sessionId) && sessionSet.has(g.header.parentSession)) addEdge('s:' + g.sessionId, 's:' + g.header.parentSession, 'forked-from')
+  }
+  for (const l of links) {
+    if (l.kind === 'executed-in' && nodeIds.has('i:' + l.fromId) && nodeIds.has('s:' + l.toId)) addEdge('i:' + l.fromId, 's:' + l.toId, 'executed-in')
+    else if (l.kind === 'landed-in' && nodeIds.has('s:' + l.fromId) && nodeIds.has('c:' + l.toId)) addEdge('s:' + l.fromId, 'c:' + l.toId, 'landed-in')
+    else if (l.kind === 'implements' && nodeIds.has('i:' + l.fromId) && nodeIds.has('c:' + l.toId)) addEdge('i:' + l.fromId, 'c:' + l.toId, 'implements')
+    else if (l.kind === 'raised-in' && nodeIds.has('d:' + l.fromId) && nodeIds.has('s:' + l.toId)) addEdge('d:' + l.fromId, 's:' + l.toId, 'raised-in')
+  }
+  return { nodes, edges }
+}

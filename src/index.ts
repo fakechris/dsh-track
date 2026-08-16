@@ -35,7 +35,7 @@ import { writeSemanticLinks, type LinkPassResult } from './graph/links.ts'
 import { induceProjects, type ProjectInductionResult } from './graph/projects.ts'
 import { scanProjectCommits, type CommitScanResult } from './graph/commits.ts'
 import { buildLineage } from './graph/lineage.ts'
-import { relatedSessions } from './graph/service.ts'
+import { relatedSessions, projectGraphView } from './graph/service.ts'
 import { buildEvolutionBrief } from './graph/brief.ts'
 
 export const name = '@fakechris/dsh-track'
@@ -1340,6 +1340,18 @@ export function apply(ctx: Context, config?: Config) {
         results.push({ cwd, result: await scanProjectCommits(store, cwd, { dryRun, limit }) })
       }
       json(res, { ok: true, dryRun, results })
+    })
+    // GET /api/track/graph/view[?projectId= | ?cwd=] — project-level graph for the visual tab.
+    registerRoute('/graph/view', async (req, res) => {
+      await ensureStoreOpen()
+      const url = new URL(req.url ?? '/', 'http://x')
+      let pid = url.searchParams.get('projectId') ?? undefined
+      const cwd = url.searchParams.get('cwd')
+      if (pid === undefined && cwd !== null && cwd !== '') {
+        const proj = (await store.listProjects()).find((p) => p.path === cwd)
+        pid = proj?.id
+      }
+      json(res, { ok: true, view: await projectGraphView(store, pid) })
     })
     // GET /api/track/lineage?entity=<id|identifier> — the Why/lineage view.
     registerRoute('/lineage', async (req, res) => {
