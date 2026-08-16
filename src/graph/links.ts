@@ -48,7 +48,8 @@ export async function writeSemanticLinks(store: TrackStore, dryRun = false): Pro
   ])
   const byKind: Record<string, number> = {}
   let count = 0
-  const put = async (fromType: Link['fromType'], fromId: string, toType: Link['toType'], toId: string, kind: Link['kind']): Promise<void> => {
+  const now = new Date().toISOString()
+  const put = async (fromType: Link['fromType'], fromId: string, toType: Link['toType'], toId: string, kind: Link['kind'], eventTime?: number): Promise<void> => {
     if (dryRun) {
       count += 1
       byKind[kind] = (byKind[kind] ?? 0) + 1
@@ -61,26 +62,34 @@ export async function writeSemanticLinks(store: TrackStore, dryRun = false): Pro
       toType,
       toId,
       kind,
-      createdAt: new Date().toISOString(),
+      createdAt: now,
+      eventTime,
+      ingestedAt: now,
     }
     await store.upsertLink(link)
     count += 1
     byKind[kind] = (byKind[kind] ?? 0) + 1
   };
+  const sessionStart = new Map<string, number>()
+  for (const g of graphs) sessionStart.set(g.sessionId, g.header.createdAt)
   for (const g of graphs) {
     if (g.header.parentSession) {
-      await put('session', g.sessionId, 'session', g.header.parentSession, 'forked-from')
+      await put('session', g.sessionId, 'session', g.header.parentSession, 'forked-from', g.header.createdAt)
     }
   }
   for (const i of issues) {
-    for (const sid of i.linkedSessionIds ?? []) await put('issue', i.id, 'session', sid, 'executed-in')
-    if (i.parentId) await put('issue', i.id, 'issue', i.parentId, 'derives')
+    for (const sid of i.linkedSessionIds ?? []) {
+      await put('issue', i.id, 'session', sid, 'executed-in', sessionStart.get(sid))
+    }
+    if (i.parentId) await put('issue', i.id, 'issue', i.parentId, 'derives', Date.parse(i.createdAt) || undefined)
+    if (i.supersedesIssueId) await put('issue', i.id, 'issue', i.supersedesIssueId, 'supersedes', Date.parse(i.createdAt) || undefined)
   }
   for (const c of captures) {
-    if (c.promotedToIssueId) await put('capture', c.id, 'issue', c.promotedToIssueId, 'derives')
+    if (c.promotedToIssueId) await put('capture', c.id, 'issue', c.promotedToIssueId, 'derives', Date.parse(c.createdAt) || undefined)
   }
   for (const d of decisions) {
-    if (d.sessionId) await put('decision', d.id, 'session', d.sessionId, 'raised-in')
+    if (d.sessionId) await put('decision', d.id, 'session', d.sessionId, 'raised-in', Date.parse(d.createdAt) || undefined)
+    if (d.supersedesDecisionId) await put('decision', d.id, 'decision', d.supersedesDecisionId, 'supersedes', Date.parse(d.answeredAt ?? d.createdAt) || undefined)
   }
   return { links: count, byKind, sessions: graphs.length, issues: issues.length, captures: captures.length, decisions: decisions.length }
 }

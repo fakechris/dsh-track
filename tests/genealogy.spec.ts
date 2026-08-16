@@ -100,10 +100,52 @@ describe('semantic links', () => {
     expect(byKind('raised-in')[0]).toMatchObject({ fromType: 'decision', fromId: 'track_decision_g1', toId: 'g-sess-1' })
   })
 
+  it('writes supersedes edges (decision + issue) with event time', async () => {
+    await store.upsertDecision({
+      id: 'track_decision_g2',
+      sessionId: 'g-sess-1',
+      question: '用 A 还是 B?',
+      options: ['A', 'B'],
+      aiPreference: 'A',
+      aiRationale: 'x',
+      impact: '',
+      need: 'confirm',
+      status: 'answered',
+      answer: 'B',
+      supersedesDecisionId: 'track_decision_g1',
+      createdAt: new Date('2026-08-01T00:00:00Z').toISOString(),
+      answeredAt: new Date('2026-08-02T00:00:00Z').toISOString(),
+    })
+    const issue2 = {
+      id: 'track_issue_g2',
+      identifier: 'INV-2',
+      title: '实现 Y（新方案）',
+      description: '',
+      priority: 2,
+      state: 'todo' as const,
+      teamId: 'INV',
+      labels: [],
+      linkedSessionIds: ['g-sess-1'],
+      supersedesIssueId: 'track_issue_g1',
+      createdAt: new Date('2026-08-03T00:00:00Z').toISOString(),
+      updatedAt: new Date('2026-08-03T00:00:00Z').toISOString(),
+    }
+    await store.upsertIssue(issue2 as never)
+    const result = await writeSemanticLinks(store)
+    expect(result.byKind['supersedes']).toBe(2)
+    const supersedes = (await store.listLinks()).filter((l) => l.kind === 'supersedes')
+    expect(supersedes.some((l) => l.fromId === 'track_decision_g2' && l.toId === 'track_decision_g1')).toBe(true)
+    expect(supersedes.some((l) => l.fromId === 'track_issue_g2' && l.toId === 'track_issue_g1')).toBe(true)
+    // eventTime = the superseding node's creation/answer time.
+    const decSup = supersedes.find((l) => l.fromId === 'track_decision_g2')
+    expect(decSup?.eventTime).toBe(Date.parse('2026-08-02T00:00:00Z'))
+  })
+
   it('dry-run previews counts without writing', async () => {
     const before = (await store.listLinks()).length
     const preview = await writeSemanticLinks(store, true)
-    expect(preview.links).toBe(4)
+    // Preview reports every logical edge derivable from the current store.
+    expect(preview.links).toBe(before)
     expect((await store.listLinks()).length).toBe(before)
   })
 });

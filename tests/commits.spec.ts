@@ -69,6 +69,9 @@ describe('scanProjectCommits', () => {
     expect(result.issuesLinked).toBe(1)
     const links = await store.listLinks()
     expect(links.some((l) => l.kind === 'landed-in' && l.fromType === 'session' && l.fromId === 'c-sess-1' && l.toType === 'commit')).toBe(true)
+    // bi-temporal: landed-in carries the commit author date as eventTime.
+    const landed = links.find((l) => l.kind === 'landed-in' && l.fromId === 'c-sess-1')!;
+    expect(landed.eventTime).toBe(1500)
     expect(links.some((l) => l.kind === 'implements' && l.fromType === 'issue' && l.fromId === 'track_issue_c1' && l.toType === 'commit')).toBe(true)
     expect((await store.listCommits()).some((c) => c.sha === SHA)).toBe(true)
   })

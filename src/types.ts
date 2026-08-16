@@ -103,6 +103,9 @@ export interface Issue {
   sourceSpan?: IssueCitation
   /** Inducted project id (see track_project_* — group of sessions by cwd). */
   projectId?: string
+  /** Issue this one supersedes (evolution edge — supersedes keeps both nodes,
+   *  the older stays visible with state canceled/archived). */
+  supersedesIssueId?: string
   /**
    * Message id of the user prompt that originated this issue (best-effort).
    * Set by `track_create_issue` (the current session's latest explicit user
@@ -201,6 +204,14 @@ export interface Link {
   toId: string
   kind: 'relates' | 'blocks' | 'derives' | 'belongs' | 'spawned-by' | 'supersedes' | 'executed-in' | 'raised-in' | 'forked-from' | 'landed-in' | 'implements'
   createdAt: string
+  /**
+   * Bi-temporal light: when the relation became true in the world (event
+   * time — e.g. the session start for executed-in, the commit author date
+   * for landed-in). Absent on legacy links.
+   */
+  eventTime?: number
+  /** When track ingested this relation (ingestion time, ISO). Defaults to createdAt. */
+  ingestedAt?: string
 }
 
 /**

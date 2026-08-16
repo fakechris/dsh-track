@@ -179,3 +179,34 @@ M2 落地顺序（按用户建议：先证据指针，后图存储，可视化�
 1. 抽取单位 = event-span（v2 sync 已有 EvidenceSpan）→ 强制落 Issue.citations（(sessionId, seqRange)）；
 2. links 表写入语义边（fork 血缘 / issue↔session / capture→issue derives / decision→session / issue parentId derives）；
 3. Project 归纳（graph header.cwd 分组 + .git/config remote → Project 节点，issue.projectId 归属）。
+
+---
+
+## 7. 技术选型报告评审（2026-08-16）
+
+对独立深度研究报告（AER + Graphiti + IBIS 融合方案）的评审结论：
+
+### 事实核验与修正
+- Entire 创始人 = Thomas Dohmke（非 Nat Friedman，已修正）；$60M seed / $300M 估值、Felicis 领投、2026-02-10 stealth —— 多源确认（GeekWire / Yahoo Finance）。
+- 报告称 entire-graph 的 README/源码「不可公开抓取」——不实：本仓已成功抓取其 README。它确为「Entity-level semantic checkpoint context plugin」，但内容是代码库结构图（函数/类型/路由/调用关系，100% 本地无模型），实现是 Go（安装需 C 编译器，疑 sqlite/cgo），非报告推断的纯 C。报告的推断方向（entity=代码符号级，非需求级）被 README 证实。
+- EasyLink（arXiv 2507.09199，「Rethinking Issue-Commit Linking」，ICSE'26，Precision@1=75.91%）确认存在；How Coding Agents Fail Their Users（20,574 sessions，含复现包 ND-SaNDwichLAB/coding-agent-misalignment）确认存在。
+
+### 与现状的对照（M1-M3 已落地）
+- 报告的「阶段 1 event-span 抽取」= v2 sync 的 EvidenceSpan + M2 落库的 citations/sourceSpan —— 已完成。
+- 报告的「阶段 2 跨会话聚合 + evidence 指针」——evidence 指针 ✅（每条 issue 带 (sessionId, seqRange)）；跨会话聚合目前是 align 的 session/title 规则合并，语义 embedding 合并未做（待 M4）。
+- 报告的「阶段 2 演化边 derives_from/spawned_by/supersedes」——derives ✅（capture→issue、issue 父子）；spawned_by / supersedes 未做（M3.5 补 supersedes：Decision.supersedesDecisionId 字段早已存在、一直未落边）。
+- 报告的「阶段 2 issue-commit 链接」= M3 的 implements（当前为确定性 token 重叠；EasyLink 式 LLM 重排作为增强项，非必需）。
+
+### 采纳与调整
+1. bi-temporal 落地为轻量版（M3.5）：Link 增加 eventTime（关系在世界上何时为真）与 ingestedAt（track 何时抽取）；supersedes 写 t_invalid 语义 = 保留被取代节点 + 写边，不删除。全量 t_valid/t_invalid 回放等 M4 可视化需要时再做。
+2. IBIS 论证结构：现有 Decision 节点的 options/aiPreference/rationale 已天然是 Position/Argument 形状——补一条 supersedes 边即可表达「决策被推翻」。
+3. 存储：维持 track KV（json/sqlite 后端由 harness 提供，量级 KB-MB）；不引 Graphiti/Neo4j（过早基础设施化，报告亦如此建议）。
+4. 社区检测 / 介数中心性（项目聚类 + 桥接需求）：M4 可视化阶段按 Leiden/Brandes 做，当前 cwd 确定性分组已够用。
+5. MCP 反哺（dsh_why/dsh_related/dsh_project_map）：M5，遵循「工具纯数据、推理留给 agent」。
+6. PM4Py conformance checking：探索性（TS 生态需外部服务），生命周期状态推断保持规则/证据驱动，暂不引入。
+7. entire 互操作（读 checkpoint trailer 拿 session↔commit）：可选增强，不阻塞。
+
+### 更新后的路线图
+- M3.5（本轮）：演化边 supersedes（decision/issue）+ Link bi-temporal 时间戳（eventTime/ingestedAt）
+- M4：语义图可视化（需求↔决策↔commit 图、项目分组、derivation tree）+ 社区检测项目归纳
+- M5：MCP server 反哺 + 复盘叙事

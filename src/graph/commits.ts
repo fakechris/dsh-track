@@ -85,7 +85,7 @@ export async function scanProjectCommits(
   const commits = parseCommitLines(raw, cwd)
   const byKind: Record<string, number> = {}
   let count = 0;
-  const put = async (fromType: Link['fromType'], fromId: string, toType: Link['toType'], toId: string, kind: Link['kind']): Promise<void> => {
+  const put = async (fromType: Link['fromType'], fromId: string, toType: Link['toType'], toId: string, kind: Link['kind'], eventTime?: number): Promise<void> => {
     count += 1;
     byKind[kind] = (byKind[kind] ?? 0) + 1;
     if (dryRun) return
@@ -93,6 +93,8 @@ export async function scanProjectCommits(
       id: semanticLinkId(fromType, fromId, toType, toId, kind),
       fromType, fromId, toType, toId, kind,
       createdAt: new Date().toISOString(),
+      eventTime,
+      ingestedAt: new Date().toISOString(),
     }
     await store.upsertLink(link)
   };
@@ -111,7 +113,7 @@ export async function scanProjectCommits(
     const end = (g.lastActivityAt ?? g.header.createdAt) + SESSION_GRACE_MS;
     for (const c of commits) {
       if (c.authorAt >= start && c.authorAt <= end) {
-        await put('session', g.sessionId, 'commit', c.id, 'landed-in')
+        await put('session', g.sessionId, 'commit', c.id, 'landed-in', c.authorAt)
         sessionsLinked += 1;
       }
     }
@@ -133,7 +135,7 @@ export async function scanProjectCommits(
       });
       const overlapHit = titleSimilarity(titleTokens, contentTokens(c.subject)) >= IMPLEMENTS_OVERLAP;
       if (windowHit || overlapHit) {
-        await put('issue', i.id, 'commit', c.id, 'implements')
+        await put('issue', i.id, 'commit', c.id, 'implements', c.authorAt)
         issuesLinked += 1;
       }
     }
