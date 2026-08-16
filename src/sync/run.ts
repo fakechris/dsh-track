@@ -334,6 +334,13 @@ export async function runSync(deps: SyncDeps, options: SyncOptions): Promise<Syn
         labels: action.candidate.labels,
         acceptanceCriteria: undefined,
         linkedSessionIds: action.candidate.linkedSessionIds,
+        semanticKind: action.candidate.semanticKind,
+        citations: action.candidate.span !== undefined && action.candidate.sessionId !== undefined
+          ? [{ sessionId: action.candidate.sessionId, seqStart: action.candidate.span.seqStart, seqEnd: action.candidate.span.seqEnd, kind: 'span' as const }]
+          : undefined,
+        sourceSpan: action.candidate.span !== undefined && action.candidate.sessionId !== undefined
+          ? { sessionId: action.candidate.sessionId, seqStart: action.candidate.span.seqStart, seqEnd: action.candidate.span.seqEnd, kind: 'span' as const }
+          : undefined,
         createdAt: action.candidate.createdAt,
         updatedAt: action.candidate.updatedAt,
       }

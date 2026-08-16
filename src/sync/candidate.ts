@@ -255,6 +255,20 @@ export async function synthesizeCandidate(
  * the store, and bug/implementation candidates lean in_progress while pure
  * investigations stay todo unless tool evidence exists.
  */
+/** Candidate kind → genealogy semantic node kind (Layer 1). */
+const SEMANTIC_KIND: Record<CandidateKind, 'requirement' | 'problem' | 'decision' | 'task' | 'investigation'> = {
+  implementation: 'requirement',
+  refactor: 'requirement',
+  docs: 'task',
+  ops: 'task',
+  bug: 'problem',
+  investigation: 'investigation',
+  decision: 'decision',
+  question: 'investigation',
+  follow_up: 'task',
+  non_task: 'task',
+}
+
 export function projectToIssueCandidate(c: TaskCandidate, teamKey = 'INV'): IssueCandidate {
   const goal = c.goal ? `目标：${c.goal}\n` : ''
   const deliverable = c.deliverable ? `交付物：${c.deliverable}\n` : ''
@@ -275,6 +289,8 @@ export function projectToIssueCandidate(c: TaskCandidate, teamKey = 'INV'): Issu
     suggestedState,
     labels: [c.kind, `confidence-${Math.round(c.confidence * 100)}`],
     linkedSessionIds: [c.sessionId],
+    span: c.span,
+    semanticKind: SEMANTIC_KIND[c.kind] ?? 'task',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     epicKey: `theme_${c.sessionId}`,

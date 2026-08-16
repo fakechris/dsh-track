@@ -40,6 +40,19 @@ export interface Capture {
   promotedToIssueId?: string
 }
 
+/**
+ * Evidence pointer from a semantic node back to the raw session log
+ * (Layer 0 — the immutable fact layer). kind='span' cites the evidence
+ * span that produced the node; kind='prompt' cites the originating user
+ * request message.
+ */
+export interface IssueCitation {
+  sessionId: string
+  seqStart: number
+  seqEnd: number
+  kind: 'span' | 'prompt'
+}
+
 /** Issue state (Linear-compatible subset). */
 export type IssueState = 'todo' | 'in_progress' | 'done' | 'canceled'
 
@@ -72,6 +85,24 @@ export interface Issue {
   acceptanceCriteria?: string
   /** Sessions that executed this issue (one issue, many sessions). */
   linkedSessionIds: string[]
+  /**
+   * Semantic node kind (genealogy Layer 1): requirement (a work thread that
+   * grew from user intent), problem (a defect/pain discovered while doing
+   * something else — the '做 A 时发现 B' node), decision, task (mechanical
+   * execution), investigation. Populated by the sync v2 pipeline from the
+   * candidate kind; absent on legacy issues.
+   */
+  semanticKind?: 'requirement' | 'problem' | 'decision' | 'task' | 'investigation'
+  /**
+   * Evidence pointers back to Layer 0 (the raw session log): every semantic
+   * edge/claim must cite its source (sessionId, seqRange) so the graph stays
+   * explainable. The first citation is also stored as sourceSpan.
+   */
+  citations?: IssueCitation[]
+  /** The originating evidence span (first citation, shorthand). */
+  sourceSpan?: IssueCitation
+  /** Inducted project id (see track_project_* — group of sessions by cwd). */
+  projectId?: string
   /**
    * Message id of the user prompt that originated this issue (best-effort).
    * Set by `track_create_issue` (the current session's latest explicit user
@@ -164,11 +195,11 @@ export interface Epic {
 /** Relation edge in the capture↔issue↔session↔epic graph. */
 export interface Link {
   id: string
-  fromType: 'capture' | 'issue' | 'session' | 'epic'
+  fromType: 'capture' | 'issue' | 'session' | 'epic' | 'decision'
   fromId: string
-  toType: 'capture' | 'issue' | 'session' | 'epic'
+  toType: 'capture' | 'issue' | 'session' | 'epic' | 'decision'
   toId: string
-  kind: 'relates' | 'blocks' | 'derives' | 'belongs'
+  kind: 'relates' | 'blocks' | 'derives' | 'belongs' | 'spawned-by' | 'supersedes' | 'executed-in' | 'raised-in' | 'forked-from'
   createdAt: string
 }
 
@@ -308,6 +339,8 @@ export interface Decision {
   /** Message id of that motivation request (`user/message` `data.id`) —
    *  the panel's deep link target when jumping back to the conversation. */
   contextMessageId?: string
+  /** Evidence pointer to the raise turn in the raw log (best-effort). */
+  citation?: { sessionId: string; seqStart: number; seqEnd: number }
   /** Id of a previous decision of the same topic that this one supersedes. */
   supersedesDecisionId?: string
   createdAt: string
@@ -385,7 +418,7 @@ export const DEFAULT_TRACK_CONFIG: TrackConfig = {
 export interface AuditEntry {
   id: string
   /** The tool that ran: capture_thought | report_decision_point | track_create_issue | track_sync_history | track_usage | track_backfill_captures | track_respond_decision | track_list_decisions | track_attach_issue | track_update_issue_state | track_issue_evidence. */
-  tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history' | 'track_usage' | 'track_backfill_captures' | 'track_respond_decision' | 'track_list_decisions' | 'track_attach_issue' | 'track_update_issue_state' | 'track_issue_evidence' | 'track_session_graph'
+  tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history' | 'track_usage' | 'track_backfill_captures' | 'track_respond_decision' | 'track_list_decisions' | 'track_attach_issue' | 'track_update_issue_state' | 'track_issue_evidence' | 'track_session_graph' | 'track_genealogy'
   /** Epoch ms of the invocation. */
   ts: number
   /** Owning agent session id when available. */
@@ -434,11 +467,31 @@ export interface LlmUsageRecord {
   reasoningTokens?: number
 }
 
+/**
+ * A Project (genealogy Layer 1 grouping): sessions whose cwd belongs to one
+ * workspace/repository. Inducted deterministically from graph headers
+ * (header.cwd) + the repo's git remote — the '归纳到几个项目' dimension.
+ */
+export interface Project {
+  /** Stable id: track_project_<hash(cwd)> — deterministic across re-runs. */
+  id: string
+  /** Project display name (basename of the cwd). */
+  name: string
+  /** Absolute workspace path (also the identity key). */
+  path: string
+  /** Git remote origin URL, when readable from <path>/.git/config. */
+  repoUrl?: string
+  /** Sessions inducted into this project (graph docs with this cwd). */
+  sessionIds: string[]
+  createdAt: string
+  updatedAt: string
+}
+
 /** KV unit descriptor for the track unit. */
 export const TRACK_UNIT = {
   name: 'track',
   version: 1,
-  tables: ['captures', 'issues', 'epics', 'links', 'decisions', 'audit', 'usage', 'graph'],
+  tables: ['captures', 'issues', 'epics', 'links', 'decisions', 'audit', 'usage', 'graph', 'projects'],
   hasGlobal: true,
 } as const
 

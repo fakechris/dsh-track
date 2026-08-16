@@ -31,6 +31,8 @@ import { evidenceWeight, describeEvidence } from './lifecycle/state-machine.ts'
 import type { SyncOptions, SyncReport, SyncDeps as SyncReportDeps } from './sync/run.ts'
 import { ensureSessionGraph, buildWorkspaceGraphs, type GraphServiceDeps } from './graph/service.ts'
 import { renderGraphSummary, renderGraphText } from './graph/render.ts'
+import { writeSemanticLinks, type LinkPassResult } from './graph/links.ts'
+import { induceProjects, type ProjectInductionResult } from './graph/projects.ts'
 
 export const name = '@fakechris/dsh-track'
 export const inject = ['tools', 'storage']
@@ -125,7 +127,7 @@ export function apply(ctx: Context, config?: Config) {
   // Observability: one audit row per model-facing tool call so funnel
   // questions are answered by the store, not by session-log archaeology.
   // Fire-and-forget: audit must never break the tool's real work.
-  const audit = (tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history' | 'track_usage' | 'track_backfill_captures' | 'track_respond_decision' | 'track_list_decisions' | 'track_attach_issue' | 'track_update_issue_state' | 'track_issue_evidence' | 'track_session_graph', exec: { agent?: { id?: string } }, ok: boolean, detail?: string): void => {
+  const audit = (tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history' | 'track_usage' | 'track_backfill_captures' | 'track_respond_decision' | 'track_list_decisions' | 'track_attach_issue' | 'track_update_issue_state' | 'track_issue_evidence' | 'track_session_graph' | 'track_genealogy', exec: { agent?: { id?: string } }, ok: boolean, detail?: string): void => {
     void ensureStoreOpen()
       .then(() => store.appendAudit({
         id: makeId('audit'),
@@ -816,6 +818,53 @@ export function apply(ctx: Context, config?: Config) {
     presentCall: (args) => ({ card: 'generic', title: 'Session graph', kind: 'other', rawInput: args.session_id ?? args.workspace ?? '' }),
   }))
 
+  // ---- track_genealogy: build the semantic layer (links + projects) ----
+  // M2 of the genealogy vision: after session graphs exist, write the
+  // semantic edges (fork lineage / issue↔session / capture→issue derives /
+  // decision→session / issue parent derives) and induct projects (sessions
+  // grouped by cwd + git remote). Deterministic + idempotent; dry-run by
+  // default reports counts without writing.
+  ctx.tools.register(defineTool({
+    name: 'track_genealogy',
+    description:
+      'Build the genealogy semantic layer: ensure session graphs (with workspace=), write semantic '
+      + 'links (fork lineage / issue↔session executed-in / capture→issue derives / decision→session '
+      + 'raised-in / issue parent derives), and induct projects (sessions grouped by cwd + git remote). '
+      + 'Defaults to a dry-run preview; set dry_run=false to write. Idempotent — re-runs never duplicate. '
+      + 'Use when the user asks to "归纳项目", "把需求串成图", or "看工作区怎么分组".',
+    parameters: {
+      workspace: { type: 'string', description: 'Workspace cwd to build graphs for first (optional).' },
+      dry_run: { type: 'boolean', description: 'Preview only — list counts without writing. Default true.' },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    async execute(args, exec) {
+      if (!exec.agent) throw new Error('track_genealogy requires an owning agent session')
+      await ensureStoreOpen()
+      const dryRun = args.dry_run ?? true
+      const sessionQuery = getSessionQuery(ctx)
+      const deps = sessionQuery ? { sessionQuery: sessionQuery as GraphServiceDeps['sessionQuery'], store } : undefined
+      let graphs = ''
+      if (args.workspace !== undefined) {
+        if (!deps) throw new Error('track_genealogy with workspace= requires the session-query service (web profile)')
+        const built = await buildWorkspaceGraphs(deps, args.workspace, 200)
+        graphs = ` graphs: ${built.built} built / ${built.skipped} fresh / ${built.failed} failed;`
+      }
+      const links = await writeSemanticLinks(store, dryRun)
+      const projects = await induceProjects(store, dryRun)
+      const kindLine = Object.entries(links.byKind).map(([k, n]) => `${k}=${n}`).join(' ') || 'none'
+      audit('track_genealogy', exec, true, `${dryRun ? 'dry' : 'written'} links=${links.links} projects=${projects.projects}`)
+      return (`Genealogy semantic layer — ${dryRun ? 'DRY RUN (no writes)' : 'WRITTEN'}.`
+        + `${graphs}`
+        + ` Links: ${links.links} (${kindLine}) across ${links.sessions} session(s), ${links.issues} issue(s), ${links.captures} capture(s), ${links.decisions} decision(s).`
+        + ` Projects: ${projects.projects} (${projects.sessionsMapped} session(s) mapped, ${projects.issuesAssigned} issue(s) assigned).`
+        + (dryRun ? ' Run with dry_run=false to write.' : ''))
+    },
+    presentCall: (args) => ({ card: 'generic', title: 'Build genealogy layer', kind: 'other', rawInput: args.workspace ?? 'whole store' }),
+  }))
+
   // ---- rule-based auto-capture: todo_write + git branch signals ----
   // Zero-cost determinism (no LLM): the capture_thought tool almost never
   // fires on its own (~1/148 measured), so the store also listens to the
@@ -1147,6 +1196,31 @@ export function apply(ctx: Context, config?: Config) {
         max,
       )
       json(res, { ok: true, result })
+    })
+    // POST /api/track/graph/link-all { cwd?, dry_run? } — semantic links + projects.
+    registerRoute('/graph/link-all', async (req, res) => {
+      await ensureStoreOpen()
+      if (req.method !== 'POST') { json(res, { error: 'method not allowed' }, 405); return }
+      const body = await readBody(req)
+      const dryRun = body.dry_run === true
+      const sessionQuery = getSessionQuery(ctx)
+      let graphs: { total: number; built: number; skipped: number; failed: number } | undefined
+      if (typeof body.cwd === 'string' && body.cwd !== '') {
+        if (!sessionQuery) { json(res, { error: 'session-query service unavailable (web profile only)' }, 503); return }
+        graphs = await buildWorkspaceGraphs(
+          { sessionQuery: sessionQuery as GraphServiceDeps['sessionQuery'], store },
+          body.cwd,
+          typeof body.max_sessions === 'number' ? body.max_sessions : 200,
+        )
+      }
+      const links = await writeSemanticLinks(store, dryRun)
+      const projects = await induceProjects(store, dryRun)
+      json(res, { ok: true, dryRun, graphs, links, projects })
+    })
+    // GET /api/track/projects — inducted projects (project dimension).
+    registerRoute('/projects', async (_req, res) => {
+      await ensureStoreOpen()
+      json(res, { projects: await store.listProjects() })
     })
   })
 }

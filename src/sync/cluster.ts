@@ -27,6 +27,12 @@ export interface IssueCandidate {
   updatedAt: string
   /** Epic key this candidate belongs to (cluster key). */
   epicKey: string
+  /** Evidence span that produced this candidate (v2 engine) — the citation
+   *  pointer back to the raw log, persisted onto the created issue. */
+  span?: { seqStart: number; seqEnd: number }
+  /** Semantic node kind (requirement/problem/decision/...) — mapped from the
+   *  v2 candidate kind; absent on v1 rule candidates. */
+  semanticKind?: 'requirement' | 'problem' | 'decision' | 'task' | 'investigation'
 }
 
 /** An epic candidate: a work thread grouping one or more sessions. */

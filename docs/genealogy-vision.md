@@ -159,3 +159,23 @@ DSH 生态（awesome-dsh-plugin）：https://github.com/awesome-dsh-plugin/aweso
 - dsh-trajectory-governance：https://github.com/dfycaly98931680/dsh-trajectory-governance
 - dsh-session-flow：https://github.com/YeqingTang/dsh-session-flow
 - dsh-fork-graph：https://github.com/chouyong/dsh-fork-graph
+---
+
+## 6. M2 细化（2026-08-16 补充，吸收用户 quick-cap 核验）
+
+外部核验修正两处：
+- entireio/entire-graph 是**代码库结构图**（函数/类型/调用关系，给 agent 探索用），不是需求/决策图——Entire 家族仍未覆盖动机演化层，差异化成立；
+- Bitwarden/claude-retrospective 查无此仓库（存疑），但 crune（chigichan24/crune）确认在做「session JSONL → 跨会话语义图 → 技能合成」。
+
+架构采纳三层模型（与 §4 兼容，节点/边词汇升级）：
+- **Layer 0 事实层（不可变）**：用户话语（session.jsonl 事件流）+ 代码产出（git commit/PR/repo）。只追加。
+- **Layer 1 语义图层（核心资产）**：节点 = Utterance / Motivation / Decision / Requirement(含 epic/issue 层级) / Problem（做 A 时发现的问题）/ Artifact(commit/repo)；
+  边 = derives_from / spawned_by / implements / supersedes。两条硬规则：
+  ① 每条边必须带 evidence 指针（(sessionId, seqRange) 回到 Layer 0）——M1 的 citation 机制直接复用；
+  ② 全图 bi-temporal（valid time + transaction time）——M3+ 引入 Graphiti 风格存储，M2 先用 supersedes 链 + 时间戳。
+- **Layer 2 视图层**：项目维度 = 图上社区检测/聚类；时间维度 = valid-time 切片回放；发展维度 = 沿 derives_from/spawned_by 展开的 derivation tree。反哺 = 图挂成 MCP server（M5+）。
+
+M2 落地顺序（按用户建议：先证据指针，后图存储，可视化最后）：
+1. 抽取单位 = event-span（v2 sync 已有 EvidenceSpan）→ 强制落 Issue.citations（(sessionId, seqRange)）；
+2. links 表写入语义边（fork 血缘 / issue↔session / capture→issue derives / decision→session / issue parentId derives）；
+3. Project 归纳（graph header.cwd 分组 + .git/config remote → Project 节点，issue.projectId 归属）。

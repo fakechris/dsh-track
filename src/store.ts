@@ -27,6 +27,7 @@ import {
   type LlmUsageRecord,
   type EvidenceRef,
   type SessionGraph,
+  type Project,
 } from './types.ts'
 import { MAX_EVIDENCE, isAutoCommit, nextInferred, sweepProposal } from './lifecycle/state-machine.ts'
 
@@ -809,6 +810,26 @@ export class TrackStore {
         [sessionId]: at,
       },
     })
+  }
+
+  // ---- projects (genealogy Layer 1 grouping) ----
+
+  /** Persist (or replace) a project. Idempotent: project ids are cwd hashes. */
+  async upsertProject(project: Project): Promise<void> {
+  await this.ready()
+    await this.chain('projects', () => this.unit.putRecord('projects', project.id, project))
+  }
+
+  async getProject(id: string): Promise<Project | undefined> {
+  await this.ready()
+    const { tables } = await this.unit.loadAll()
+    return (tables.projects ?? {})[id] as Project | undefined
+  }
+
+  async listProjects(): Promise<Project[]> {
+  await this.ready()
+    const { tables } = await this.unit.loadAll()
+    return Object.values(tables.projects ?? {}) as Project[]
   }
 
   // ---- audit (observability) ----
