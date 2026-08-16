@@ -1,9 +1,9 @@
-# HANDOFF — M3.5 演化边 + bi-temporal 部署（2026-08-16）
+# HANDOFF — M4 Ledger & Assertion 加固部署（2026-08-16）
 
-## M3.5 内容
+## M4 内容（第二份 research 评审落地）
 
 ## 验收结果（最终）
-- link-all：117 语义边 + eventTime（源会话有图时）
-- git/scan：101 commits，131 landed-in / 145 implements，全部带 eventTime（commit 时间）
-- supersedes 边：live 数据暂无 supersedes 记录（机制就绪，有数据即触发）
-- 分支已 push（M1-M3.5，PR #74）
+- linkMethod：117 语义边全带方法 + git 重扫后 294 条 commit 链接带 commit-window
+- extractions：sync 后记录 1 条 run（v1，4 候选）
+- origin：v2 新建 issue 时写入（现有 issue 为存量，v1 引擎不写）
+- 分支已 push（M1-M4，PR #74）

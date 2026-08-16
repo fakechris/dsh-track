@@ -34,6 +34,7 @@ import { renderGraphSummary, renderGraphText } from './graph/render.ts'
 import { writeSemanticLinks, type LinkPassResult } from './graph/links.ts'
 import { induceProjects, type ProjectInductionResult } from './graph/projects.ts'
 import { scanProjectCommits, type CommitScanResult } from './graph/commits.ts'
+import { buildLineage } from './graph/lineage.ts'
 
 export const name = '@fakechris/dsh-track'
 export const inject = ['tools', 'storage']
@@ -1297,6 +1298,16 @@ export function apply(ctx: Context, config?: Config) {
         results.push({ cwd, result: await scanProjectCommits(store, cwd, { dryRun, limit }) })
       }
       json(res, { ok: true, dryRun, results })
+    })
+    // GET /api/track/lineage?entity=<id|identifier> — the Why/lineage view.
+    registerRoute('/lineage', async (req, res) => {
+      await ensureStoreOpen()
+      const url = new URL(req.url ?? '/', 'http://x')
+      const entity = url.searchParams.get('entity')
+      if (!entity) { json(res, { error: 'entity required' }, 400); return }
+      const view = await buildLineage(store, entity)
+      if (!view) { json(res, { error: 'entity not found' }, 404); return }
+      json(res, { ok: true, view })
     })
     // GET /api/track/extractions[?limit=] — durable extraction runs.
     registerRoute('/extractions', async (req, res) => {
