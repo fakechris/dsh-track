@@ -7,9 +7,9 @@
 
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionQueryEngine } from '@deepseek-ai/dsh-session-query'
-import type { TrackStore } from '../store.ts'
 import type { SessionGraph } from '../types.ts'
 import { buildSessionGraph, GRAPH_VERSION } from './build.ts'
+import type { TrackStore } from '../store.ts'
 
 /** What the graph service needs from the harness + store. */
 export interface GraphServiceDeps {
@@ -83,4 +83,38 @@ export async function buildWorkspaceGraphs(
     }
   }
   return result
+}
+/**
+ * Multi-session relations (M6 seed): for one session, resolve its parent
+ * (forked from) and children (sessions whose graph header carries it as
+ * parentSession) — the cross-session aggregation surface.
+ */
+export interface RelatedSession {
+  sessionId: string
+  title: string
+  cwd?: string
+}
+export interface RelatedSessions {
+  parent?: RelatedSession
+  children: RelatedSession[]
+}
+export async function relatedSessions(store: TrackStore, sessionId: string): Promise<RelatedSessions> {
+  const graphs = await store.listGraphs()
+  const titleOf = (g: { sessionId: string; header: { cwd?: string }; nodes: Array<{ kind: string; title?: string }> }): string => {
+    const root = g.nodes.find((n) => n.kind === 'session')
+    return root?.title ?? g.sessionId
+  }
+  const self = graphs.find((g) => g.sessionId === sessionId)
+  const children: RelatedSession[] = []
+  for (const g of graphs) {
+    if (g.header.parentSession === sessionId) children.push({ sessionId: g.sessionId, title: titleOf(g), cwd: g.header.cwd })
+  }
+  children.sort((a, b) => a.sessionId.localeCompare(b.sessionId))
+  const parent = self?.header.parentSession
+  let parentInfo: RelatedSession | undefined
+  if (parent) {
+    const p = graphs.find((g) => g.sessionId === parent)
+    parentInfo = { sessionId: parent, title: p ? titleOf(p) : parent, cwd: p?.header.cwd }
+  }
+  return { parent: parentInfo, children }
 }

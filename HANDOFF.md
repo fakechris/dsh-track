@@ -1,9 +1,8 @@
-# HANDOFF — M4 Ledger & Assertion 加固部署（2026-08-16）
+# HANDOFF — M5 Why/lineage 谱系视图部署（2026-08-16）
 
-## M4 内容（第二份 research 评审落地）
+## M5 内容
 
 ## 验收结果（最终）
-- linkMethod：117 语义边全带方法 + git 重扫后 294 条 commit 链接带 commit-window
-- extractions：sync 后记录 1 条 run（v1，4 候选）
-- origin：v2 新建 issue 时写入（现有 issue 为存量，v1 引擎不写）
-- 分支已 push（M1-M4，PR #74）
+- /api/track/lineage：INV-122 → 41 邻居 / 38 实现 commit / 演化边；INV-153（v2 sync 产出）→ 证据链含真实会话 seq 区间与用户消息
+- 面板「谱系」按钮（硬刷新可见）
+- 分支已 push（M1-M5，PR #74）

@@ -5,8 +5,8 @@
  * @module @fakechris/dsh-track/graph/service
  */
 import type { SessionQueryEngine } from '@deepseek-ai/dsh-session-query';
-import type { TrackStore } from '../store.ts';
 import type { SessionGraph } from '../types.ts';
+import type { TrackStore } from '../store.ts';
 /** What the graph service needs from the harness + store. */
 export interface GraphServiceDeps {
     sessionQuery: Pick<SessionQueryEngine, 'readSession' | 'filterSessions'>;
@@ -36,3 +36,18 @@ export declare function ensureSessionGraph(deps: GraphServiceDeps, sessionId: st
  * only folds sessions that grew since the last pass.
  */
 export declare function buildWorkspaceGraphs(deps: GraphServiceDeps, cwd: string, maxSessions?: number, now?: number): Promise<BuildWorkspaceResult>;
+/**
+ * Multi-session relations (M6 seed): for one session, resolve its parent
+ * (forked from) and children (sessions whose graph header carries it as
+ * parentSession) — the cross-session aggregation surface.
+ */
+export interface RelatedSession {
+    sessionId: string;
+    title: string;
+    cwd?: string;
+}
+export interface RelatedSessions {
+    parent?: RelatedSession;
+    children: RelatedSession[];
+}
+export declare function relatedSessions(store: TrackStore, sessionId: string): Promise<RelatedSessions>;
