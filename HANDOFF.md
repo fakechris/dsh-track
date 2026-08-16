@@ -1,10 +1,8 @@
-# HANDOFF — M1 会话执行图部署（2026-08-16）
+# HANDOFF — M2 语义图层部署（2026-08-16）
 
-## 本次做了什么
+## M2 内容
 
 ## 验收结果（2026-08-16 重启后）
-- 3080 已由 guard 自动拉起（新 PID）；/api/track/graph 三路由全通
-- 会话图构建验证：11 nodes/11 edges、tool call 配对 citation 正确
-- build-all：28 会话 27 built / 1 skipped / 0 failed
-- client bundle 含「会话结构图」（硬刷新即可见）
-- PR #74 已开（feat/session-graph-m1），待 squash merge
+- link-all：117 条语义边（forked-from 5 / executed-in 99 / derives 10 / raised-in 3），幂等（重跑不重复）
+- projects：dsh-involute（28 会话，repoUrl=github.com/dsh-external/dsh-track.git），11 issue 归属
+- 分支已 push（M1+M2，PR #74 自动更新）

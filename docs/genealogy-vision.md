@@ -165,7 +165,7 @@ DSH 生态（awesome-dsh-plugin）：https://github.com/awesome-dsh-plugin/aweso
 
 外部核验修正两处：
 - entireio/entire-graph 是**代码库结构图**（函数/类型/调用关系，给 agent 探索用），不是需求/决策图——Entire 家族仍未覆盖动机演化层，差异化成立；
-- Bitwarden/claude-retrospective 查无此仓库（存疑），但 crune（chigichan24/crune）确认在做「session JSONL → 跨会话语义图 → 技能合成」。
+- claude-retrospective 在 bitwarden/ai-plugins 仓库下（plugins/claude-retrospective）：多源复盘插件（git 历史 + ~/.claude/projects JSONL + 质量指标 + 用户反馈 → 证据型复盘 + 改进循环），对应愿景 M5 复盘层，不是需求谱系；crune（chigichan24/crune）确认在做「session JSONL → 跨会话语义图 → 技能合成」。
 
 架构采纳三层模型（与 §4 兼容，节点/边词汇升级）：
 - **Layer 0 事实层（不可变）**：用户话语（session.jsonl 事件流）+ 代码产出（git commit/PR/repo）。只追加。

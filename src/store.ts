@@ -28,6 +28,7 @@ import {
   type EvidenceRef,
   type SessionGraph,
   type Project,
+  type CommitArtifact,
 } from './types.ts'
 import { MAX_EVIDENCE, isAutoCommit, nextInferred, sweepProposal } from './lifecycle/state-machine.ts'
 
@@ -830,6 +831,27 @@ export class TrackStore {
   await this.ready()
     const { tables } = await this.unit.loadAll()
     return Object.values(tables.projects ?? {}) as Project[]
+  }
+
+  // ---- git commit artifacts (M3 — Layer 0 code anchor) ----
+
+  /** Persist (or replace) a commit artifact. Idempotent: ids are sha hashes. */
+  async upsertCommit(commit: CommitArtifact): Promise<void> {
+  await this.ready()
+    await this.chain('commits', () => this.unit.putRecord('commits', commit.id, commit))
+  }
+
+  async getCommit(id: string): Promise<CommitArtifact | undefined> {
+  await this.ready()
+    const { tables } = await this.unit.loadAll()
+    return (tables.commits ?? {})[id] as CommitArtifact | undefined
+  }
+
+  async listCommits(projectId?: string): Promise<CommitArtifact[]> {
+  await this.ready()
+    const { tables } = await this.unit.loadAll()
+    const commits = Object.values(tables.commits ?? {}) as CommitArtifact[]
+    return projectId ? commits.filter((c) => c.projectId === projectId) : commits
   }
 
   // ---- audit (observability) ----

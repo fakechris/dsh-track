@@ -63,6 +63,7 @@ interface BuilderState {
   pendingUser: string[]
   curTurn?: number
   maxSeq: number
+  maxTime: number
   agentLabel?: string
   sessionTitle?: string
   addEdge(kind: 'contains' | 'invokes' | 'provoked', fromId: string, toId: string, seq: number): void
@@ -94,6 +95,7 @@ export function buildSessionGraph(
     toolByCall: new Map(),
     pendingUser: [],
     maxSeq: 0,
+    maxTime: 0,
     addEdge(kind, fromId, toId, seq) {
       const id = graphEdgeId(this.sessionId, kind, fromId, toId)
       if (this.edges.has(id)) return
@@ -136,6 +138,7 @@ export function buildSessionGraph(
     const seq = event.seq
     const time = event.time ?? now
     if (seq > st.maxSeq) st.maxSeq = seq
+    if (time > st.maxTime) st.maxTime = time
     const data = event.data as Record<string, unknown>
     // Cast to string: older session-type catalogs may not list every event
     // type (e.g. subagent/descriptor), while the runtime logs still carry them.
@@ -284,6 +287,7 @@ export function buildSessionGraph(
     nodes,
     edges,
     seqEnd: st.maxSeq,
+    lastActivityAt: st.maxTime > 0 ? st.maxTime : now,
     builtAt: now,
     version: 1,
   }

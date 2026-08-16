@@ -11,7 +11,7 @@
  * @module @fakechris/dsh-track/store
  */
 import type { KvFacet, KvUnitDescriptor } from '@deepseek-ai/dsh-storage';
-import { type AuditEntry, type Capture, type Decision, type Epic, type TrackGlobal, type TrackConfig, type Issue, type Link, type LlmUsageRecord, type EvidenceRef, type SessionGraph, type Project } from './types.ts';
+import { type AuditEntry, type Capture, type Decision, type Epic, type TrackGlobal, type TrackConfig, type Issue, type Link, type LlmUsageRecord, type EvidenceRef, type SessionGraph, type Project, type CommitArtifact } from './types.ts';
 /** Open captures older than this are reported as stale by the auto-maintenance
  *  loop (they should be promoted, archived, or deleted). */
 export declare const STALE_CAPTURE_MS: number;
@@ -257,6 +257,10 @@ export declare class TrackStore {
     upsertProject(project: Project): Promise<void>;
     getProject(id: string): Promise<Project | undefined>;
     listProjects(): Promise<Project[]>;
+    /** Persist (or replace) a commit artifact. Idempotent: ids are sha hashes. */
+    upsertCommit(commit: CommitArtifact): Promise<void>;
+    getCommit(id: string): Promise<CommitArtifact | undefined>;
+    listCommits(projectId?: string): Promise<CommitArtifact[]>;
     appendAudit(entry: AuditEntry): Promise<void>;
     listAudit(): Promise<AuditEntry[]>;
     /** Append one LLM usage record (append-only ledger, one per real request). */

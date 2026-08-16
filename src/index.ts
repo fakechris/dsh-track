@@ -33,6 +33,7 @@ import { ensureSessionGraph, buildWorkspaceGraphs, type GraphServiceDeps } from 
 import { renderGraphSummary, renderGraphText } from './graph/render.ts'
 import { writeSemanticLinks, type LinkPassResult } from './graph/links.ts'
 import { induceProjects, type ProjectInductionResult } from './graph/projects.ts'
+import { scanProjectCommits, type CommitScanResult } from './graph/commits.ts'
 
 export const name = '@fakechris/dsh-track'
 export const inject = ['tools', 'storage']
@@ -127,7 +128,7 @@ export function apply(ctx: Context, config?: Config) {
   // Observability: one audit row per model-facing tool call so funnel
   // questions are answered by the store, not by session-log archaeology.
   // Fire-and-forget: audit must never break the tool's real work.
-  const audit = (tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history' | 'track_usage' | 'track_backfill_captures' | 'track_respond_decision' | 'track_list_decisions' | 'track_attach_issue' | 'track_update_issue_state' | 'track_issue_evidence' | 'track_session_graph' | 'track_genealogy', exec: { agent?: { id?: string } }, ok: boolean, detail?: string): void => {
+  const audit = (tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history' | 'track_usage' | 'track_backfill_captures' | 'track_respond_decision' | 'track_list_decisions' | 'track_attach_issue' | 'track_update_issue_state' | 'track_issue_evidence' | 'track_session_graph' | 'track_genealogy' | 'track_git_artifacts', exec: { agent?: { id?: string } }, ok: boolean, detail?: string): void => {
     void ensureStoreOpen()
       .then(() => store.appendAudit({
         id: makeId('audit'),
@@ -865,6 +866,58 @@ export function apply(ctx: Context, config?: Config) {
     presentCall: (args) => ({ card: 'generic', title: 'Build genealogy layer', kind: 'other', rawInput: args.workspace ?? 'whole store' }),
   }))
 
+  // ---- track_git_artifacts: scan a repo's commits and align with the graph ----
+  // M3 of the genealogy vision: commits are the Layer-0 code anchor. Each
+  // scanned commit links to the session whose activity window it falls in
+  // (landed-in) and to issues it implements (title overlap / session window).
+  ctx.tools.register(defineTool({
+    name: 'track_git_artifacts',
+    description:
+      'Scan a repository\'s git commits into the Track store and align them with the genealogy graph: '
+      + 'each commit links to the session whose activity window it falls in (landed-in) and to issues it '
+      + 'implements (title token overlap or same-session window). Workspace defaults to the current '
+      + 'session\'s cwd; use project-level to scan every inducted project. Dry-run by default. '
+      + 'Use when the user asks "这个需求落到哪个 commit", "代码落地在哪儿", or wants git history linked.',
+    parameters: {
+      workspace: { type: 'string', description: 'Repo cwd to scan. Defaults to the current session\'s cwd.' },
+      project_level: { type: 'boolean', description: 'Scan every inducted project (overrides workspace=).' },
+      dry_run: { type: 'boolean', description: 'Preview only — list counts without writing. Default true.' },
+      limit: { type: 'integer', description: 'Max commits per repo (default 200).' },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    async execute(args, exec) {
+      if (!exec.agent) throw new Error('track_git_artifacts requires an owning agent session')
+      await ensureStoreOpen()
+      const dryRun = args.dry_run ?? true
+      const limit = args.limit ?? 200
+      const targets: string[] = []
+      if (args.project_level === true) {
+        targets.push(...(await store.listProjects()).map((p) => p.path))
+      } else {
+        const cwd = args.workspace ?? exec.agent.session.header.cwd
+        if (!cwd) throw new Error('track_git_artifacts needs workspace= or a session cwd')
+        targets.push(cwd)
+      }
+      const lines: string[] = [`Git artifact scan — ${dryRun ? 'DRY RUN (no writes)' : 'WRITTEN'}.`]
+      let totalCommits = 0, totalSessions = 0, totalIssues = 0
+      for (const cwd of targets) {
+        const result = await scanProjectCommits(store, cwd, { dryRun, limit })
+        if (result.error) { lines.push(`  ! ${cwd}: ${result.error.slice(0, 120)}`); continue }
+        totalCommits += result.commits; totalSessions += result.sessionsLinked; totalIssues += result.issuesLinked
+        const kinds = Object.entries(result.byKind).map(([k, n]) => `${k}=${n}`).join(' ') || 'none'
+        lines.push(`  ${cwd}: ${result.commits} commit(s), ${result.sessionsLinked} session link(s), ${result.issuesLinked} issue link(s) [${kinds}]`)
+      }
+      audit('track_git_artifacts', exec, true, `${dryRun ? 'dry' : 'written'} ${targets.length} repo(s), ${totalCommits} commits`)
+      lines.push(`Total: ${totalCommits} commit(s) / ${totalSessions} session link(s) / ${totalIssues} issue link(s) across ${targets.length} repo(s).`
+        + (dryRun ? ' Run with dry_run=false to write.' : ''))
+      return lines.join('\n')
+    },
+    presentCall: (args) => ({ card: 'generic', title: 'Scan git artifacts', kind: 'other', rawInput: args.workspace ?? args.project_level ? 'all projects' : '' }),
+  }))
+
   // ---- rule-based auto-capture: todo_write + git branch signals ----
   // Zero-cost determinism (no LLM): the capture_thought tool almost never
   // fires on its own (~1/148 measured), so the store also listens to the
@@ -1221,6 +1274,34 @@ export function apply(ctx: Context, config?: Config) {
     registerRoute('/projects', async (_req, res) => {
       await ensureStoreOpen()
       json(res, { projects: await store.listProjects() })
+    })
+    // POST /api/track/git/scan { cwd?, project_level?, dry_run?, limit? } — commit scan.
+    registerRoute('/git/scan', async (req, res) => {
+      await ensureStoreOpen()
+      if (req.method !== 'POST') { json(res, { error: 'method not allowed' }, 405); return }
+      const body = await readBody(req)
+      const dryRun = body.dry_run === true
+      const limit = typeof body.limit === 'number' ? body.limit : 200
+      const targets: string[] = []
+      if (body.project_level === true) {
+        targets.push(...(await store.listProjects()).map((p) => p.path))
+      } else if (typeof body.cwd === 'string' && body.cwd !== '') {
+        targets.push(body.cwd)
+      } else {
+        json(res, { error: 'cwd or project_level required' }, 400); return
+      }
+      const results: Array<{ cwd: string; result: CommitScanResult }> = []
+      for (const cwd of targets) {
+        results.push({ cwd, result: await scanProjectCommits(store, cwd, { dryRun, limit }) })
+      }
+      json(res, { ok: true, dryRun, results })
+    })
+    // GET /api/track/commits?projectId= — scanned commit artifacts.
+    registerRoute('/commits', async (req, res) => {
+      await ensureStoreOpen()
+      const url = new URL(req.url ?? '/', 'http://x')
+      const projectId = url.searchParams.get('projectId') ?? undefined
+      json(res, { commits: await store.listCommits(projectId) })
     })
   })
 }

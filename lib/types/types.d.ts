@@ -180,11 +180,11 @@ export interface Epic {
 /** Relation edge in the capture↔issue↔session↔epic graph. */
 export interface Link {
     id: string;
-    fromType: 'capture' | 'issue' | 'session' | 'epic' | 'decision';
+    fromType: 'capture' | 'issue' | 'session' | 'epic' | 'decision' | 'commit' | 'project';
     fromId: string;
-    toType: 'capture' | 'issue' | 'session' | 'epic' | 'decision';
+    toType: 'capture' | 'issue' | 'session' | 'epic' | 'decision' | 'commit' | 'project';
     toId: string;
-    kind: 'relates' | 'blocks' | 'derives' | 'belongs' | 'spawned-by' | 'supersedes' | 'executed-in' | 'raised-in' | 'forked-from';
+    kind: 'relates' | 'blocks' | 'derives' | 'belongs' | 'spawned-by' | 'supersedes' | 'executed-in' | 'raised-in' | 'forked-from' | 'landed-in' | 'implements';
     createdAt: string;
 }
 /**
@@ -267,6 +267,8 @@ export interface SessionGraph {
     edges: GraphEdge[];
     /** Highest event seq folded into the graph. */
     seqEnd: number;
+    /** Epoch ms of the last event folded into the graph (activity window end). */
+    lastActivityAt: number;
     /** Epoch ms when this graph was built. */
     builtAt: number;
     /** Builder schema version (bump on breaking shape changes). */
@@ -384,7 +386,7 @@ export declare const DEFAULT_TRACK_CONFIG: TrackConfig;
 export interface AuditEntry {
     id: string;
     /** The tool that ran: capture_thought | report_decision_point | track_create_issue | track_sync_history | track_usage | track_backfill_captures | track_respond_decision | track_list_decisions | track_attach_issue | track_update_issue_state | track_issue_evidence. */
-    tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history' | 'track_usage' | 'track_backfill_captures' | 'track_respond_decision' | 'track_list_decisions' | 'track_attach_issue' | 'track_update_issue_state' | 'track_issue_evidence' | 'track_session_graph' | 'track_genealogy';
+    tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history' | 'track_usage' | 'track_backfill_captures' | 'track_respond_decision' | 'track_list_decisions' | 'track_attach_issue' | 'track_update_issue_state' | 'track_issue_evidence' | 'track_session_graph' | 'track_genealogy' | 'track_git_artifacts';
     /** Epoch ms of the invocation. */
     ts: number;
     /** Owning agent session id when available. */
@@ -450,10 +452,30 @@ export interface Project {
     createdAt: string;
     updatedAt: string;
 }
+/**
+ * A git commit artifact (genealogy Layer 1 Artifact node / Layer 0 code
+ * anchor). Scanned from a project's git log and linked to sessions (by
+ * activity time window) and issues (by title token overlap).
+ */
+export interface CommitArtifact {
+    /** Stable id: track_commit_<hash(sha)> — deterministic across scans. */
+    id: string;
+    /** Git commit sha (full 40-hex). */
+    sha: string;
+    /** Project id the commit belongs to (projectIdFor(cwd)). */
+    projectId: string;
+    /** Repo cwd the commit was scanned from. */
+    repo: string;
+    /** Author date, epoch ms. */
+    authorAt: number;
+    /** Commit subject line (first line of the message). */
+    subject: string;
+    createdAt: string;
+}
 /** KV unit descriptor for the track unit. */
 export declare const TRACK_UNIT: {
     readonly name: "track";
     readonly version: 1;
-    readonly tables: readonly ["captures", "issues", "epics", "links", "decisions", "audit", "usage", "graph", "projects"];
+    readonly tables: readonly ["captures", "issues", "epics", "links", "decisions", "audit", "usage", "graph", "projects", "commits"];
     readonly hasGlobal: true;
 };
