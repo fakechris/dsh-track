@@ -13,6 +13,7 @@
 import { conversationContextKey } from '@deepseek-ai/dsh-client-runtime/client'
 import type { ClientContext, ISessions, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { Capture, Issue } from '../types.ts'
+import { mountGraphForce, type GFData } from './graph-force.tsx'
 
 /** Stable ids for the injected panel and toggle. */
 export const PANEL_ID = 'dsh-track-panel'
@@ -484,7 +485,7 @@ const PANEL_CSS = `
 #${PANEL_ID} .inv-graphview { position: relative; z-index: 1; grid-column: 1 / -1 !important; grid-row: 1 / -1 !important; width: 100%; height: 100%; display: flex; flex-direction: column; background: var(--dsw-alias-bg-base, #fff); overflow: hidden; }
 #${PANEL_ID} .inv-graphview[hidden] { display: none; }
 #${PANEL_ID} .inv-graphview-head { display: flex; align-items: center; gap: 8px; padding: 0 10px; height: 36px; border-bottom: 1px solid var(--dsw-alias-border-l1, rgba(0,0,0,.06)); flex: none; }
-#${PANEL_ID} .inv-graphview .inv-graph { flex: 1; overflow-y: auto; padding: 10px; gap: 2px; font-size: 12px; }
+#${PANEL_ID} .inv-graphview .inv-graph { flex: 1; min-height: 0; position: relative; overflow: hidden; padding: 0; }
 #${PANEL_ID} .inv-related { border-top: 1px dashed var(--dsw-alias-border-l1, rgba(0,0,0,.1)); padding: 6px 10px; font-size: 12px; }
 #${PANEL_ID} .gv-svg { display: block; }
 #${PANEL_ID} .gv-edge { stroke: rgba(0,0,0,.15); stroke-width: 1; }
@@ -1127,7 +1128,10 @@ async function renderGraph(): Promise<void> {
     el.innerHTML = '<div class="inv-empty">暂无图谱数据 — 点「构建」生成会话图后重试</div>'
     return
   }
-  renderGraphSvg(el, view)
+  mountGraphForce(el, view as GFData, (n) => {
+    if (n.kind === 'session' && n.sessionId) void jumpToConversation({ sessionId: n.sessionId })
+    else if (n.kind === 'issue' && n.sessionId) void jumpToConversation({ sessionId: n.sessionId, messageId: n.messageId })
+  })
 }
 
 /** Build the current session's graph (POST) then re-render. */

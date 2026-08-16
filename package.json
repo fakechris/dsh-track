@@ -12,11 +12,11 @@
     "typecheck": "node scripts/dsh-env.mjs tsc -p \"${DSH_TSCONFIG:-tsconfig.json}\" --noEmit"
   },
   "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-llm": "*",
     "@deepseek-ai/dsh-session": "*",
     "@deepseek-ai/dsh-storage": "*",
-    "@deepseek-ai/dsh-tools": "*",
-    "@deepseek-ai/dsh-llm": "*",
-    "@deepseek-ai/cordis": "*"
+    "@deepseek-ai/dsh-tools": "*"
   },
   "dsh": {
     "bundle": {
