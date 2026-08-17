@@ -108,7 +108,7 @@ export async function buildCalendar(store: TrackStore, maxDays = 18): Promise<Ca
       const instr = inUser.slice(1).map((n) => ({ text: n.title, messageId: n.messageId }))
       const turns = inRange.filter((n) => n.kind === 'turn' && n.outcome !== undefined).map((n) => ({ outcome: n.outcome! }))
       const tools = Array.from(new Set(inRange.filter((n) => n.kind === 'tool' && n.toolName).map((n) => n.toolName!))).slice(0, 6)
-      const proj = issue?.projectId ?? UNK_ID
+      const proj = (issue?.projectId !== undefined && projById.has(issue.projectId)) ? issue.projectId : UNK_ID
       segments.push({
         day, proj,
         req: issue?.title ?? (lead?.title ?? '(未归入需求)'),

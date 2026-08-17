@@ -9,6 +9,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionQueryEngine } from '@deepseek-ai/dsh-session-query'
 import type { SessionGraph } from '../types.ts'
 import { buildSessionGraph, GRAPH_VERSION } from './build.ts'
+import { reposOfEvents } from './repos.ts'
 import type { TrackStore } from '../store.ts'
 
 /** What the graph service needs from the harness + store. */
@@ -45,9 +46,10 @@ export async function ensureSessionGraph(
   const snap = await deps.sessionQuery.readSession(sessionId as SessionId)
   if (!rebuild) {
     const existing = await deps.store.getGraph(sessionId)
-    if (existing !== undefined && existing.seqEnd >= logSeqEnd(snap.events) && existing.version >= GRAPH_VERSION) return existing
+    if (existing !== undefined && existing.seqEnd >= logSeqEnd(snap.events) && existing.version >= GRAPH_VERSION && Array.isArray(existing.header.repos)) return existing
   }
   const graph = buildSessionGraph(sessionId, snap.events, snap.session, now)
+  graph.header.repos = reposOfEvents(snap.events)
   await deps.store.upsertGraph(graph)
   await deps.store.markGraphBuilt(sessionId)
   return graph
@@ -71,10 +73,11 @@ export async function buildWorkspaceGraphs(
     try {
       const snap = await deps.sessionQuery.readSession(rec.header.id)
       const existing = await deps.store.getGraph(rec.header.id)
-      if (existing !== undefined && existing.seqEnd >= logSeqEnd(snap.events) && existing.version >= GRAPH_VERSION) {
+      if (existing !== undefined && existing.seqEnd >= logSeqEnd(snap.events) && existing.version >= GRAPH_VERSION && Array.isArray(existing.header.repos)) {
         result.skipped += 1; continue
       }
       const graph = buildSessionGraph(rec.header.id, snap.events, snap.session, now)
+      graph.header.repos = reposOfEvents(snap.events)
       await deps.store.upsertGraph(graph)
       await deps.store.markGraphBuilt(rec.header.id)
       result.built += 1
@@ -143,8 +146,8 @@ export async function projectGraphView(store: TrackStore, projectId?: string): P
   let sessionIds: Set<string>
   if (projectId) {
     const p = await store.getProject(projectId)
-    const path = p?.path
-    sessionIds = new Set(graphs.filter((g) => g.header.cwd === path).map((g) => g.sessionId))
+    const repoUrl = p?.repoUrl
+    sessionIds = new Set(graphs.filter((g) => (repoUrl !== undefined && g.header.repos !== undefined && g.header.repos.some((r) => r.url === repoUrl)) || (repoUrl === undefined && g.header.cwd === p?.path)).map((g) => g.sessionId))
   } else {
     sessionIds = new Set(graphs.map((g) => g.sessionId))
   }

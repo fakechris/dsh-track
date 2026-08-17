@@ -255,6 +255,8 @@ export declare class TrackStore {
     markGraphBuilt(sessionId: string, at?: string): Promise<void>;
     /** Persist (or replace) a project. Idempotent: project ids are cwd hashes. */
     upsertProject(project: Project): Promise<void>;
+    /** Remove a project record (stale induction cleanup). */
+    deleteProject(id: string): Promise<void>;
     getProject(id: string): Promise<Project | undefined>;
     listProjects(): Promise<Project[]>;
     /** Persist (or replace) a commit artifact. Idempotent: ids are sha hashes. */

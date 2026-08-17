@@ -284,6 +284,12 @@ export interface SessionGraph {
         delegationDepth?: number;
         agentPreset?: string;
         createdAt: number;
+        /** Repos this session's tool calls touched (repo-touch project induction). */
+        repos?: Array<{
+            url: string;
+            root: string;
+            name: string;
+        }>;
     };
     nodes: GraphNode[];
     edges: GraphEdge[];

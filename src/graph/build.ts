@@ -52,7 +52,7 @@ const cite = (sessionId: string, a: number, b: number): GraphCitation => ({ sess
 
 /** Builder schema version — bump on shape changes; stored graphs older than
  *  this are stale and get rebuilt (service freshness check). */
-export const GRAPH_VERSION = 3
+export const GRAPH_VERSION = 5
 
 interface BuilderState {
   sessionId: string
