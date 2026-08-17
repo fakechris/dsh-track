@@ -17,10 +17,11 @@ export interface CalSegment {
 }
 export interface CalRequirement {
   id: string; sessionId: string; proj: string; req: string; day: number;
-  events: number; messageId?: string;
+  events: number; messageId?: string; origin: CalOrigin;
 }
+export type CalOrigin = 'user' | 'subagent' | 'auto'
 export interface CalSession {
-  id: string; title: string; startDay: number; activeDays: number[];
+  id: string; title: string; origin: CalOrigin; userMsgCount: number; startDay: number; activeDays: number[];
   perDay: Array<{ day: number; dom: string; events: number; multi: boolean }>;
   segments: CalSegment[]; switches: number; nReq: number; nInstr: number; projects: string[];
 }
@@ -85,6 +86,8 @@ export async function buildCalendar(store: TrackStore, maxDays = 18): Promise<Ca
   for (const g of graphs) {
     const nodes = [...g.nodes].sort((a, b) => a.citation.seqStart - b.citation.seqStart)
     const userMsgs = nodes.filter((n) => n.kind === 'user-message')
+    // Session origin: subagent (delegated) > user (has a real user utterance) > auto (no user input — scheduled/background).
+    const origin: CalOrigin = (g.header.origin === 'subagent' || (g.header.delegationDepth ?? 0) > 0) ? 'subagent' : (userMsgs.length > 0 ? 'user' : 'auto')
     const segIssues = issuesBySession.get(g.sessionId) ?? []
     const bounds: Array<{ start: number; end: number }> = []
     for (let k = 0; k < segIssues.length; k++) {
@@ -115,7 +118,7 @@ export async function buildCalendar(store: TrackStore, maxDays = 18): Promise<Ca
       // Yarn node = the REQUIREMENT (issue/capture), not the session.
       if (issue) {
         requirements.push({
-          id: issue.id, sessionId: g.sessionId, proj, req: issue.title, day, events: inRange.length, messageId: issue.promptMessageId,
+          id: issue.id, sessionId: g.sessionId, proj, req: issue.title, day, events: inRange.length, messageId: issue.promptMessageId, origin,
         })
       }
     }
@@ -141,7 +144,7 @@ export async function buildCalendar(store: TrackStore, maxDays = 18): Promise<Ca
     for (let k = 1; k < known.length; k++) if (known[k] !== known[k - 1]) switches++;
     const root = nodes.find((n) => n.kind === 'session')
     sessions.push({
-      id: g.sessionId, title: root?.title ?? g.sessionId, startDay: perDay[0]?.day ?? 0,
+      id: g.sessionId, title: root?.title ?? g.sessionId, origin, userMsgCount: userMsgs.length, startDay: perDay[0]?.day ?? 0,
       activeDays: perDay.map((p) => p.day), perDay, segments, switches,
       nReq: segments.length, nInstr: segments.reduce((a, s) => a + s.instr.length, 0),
       projects: [...new Set(known)],

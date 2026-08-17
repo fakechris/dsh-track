@@ -30,11 +30,12 @@ export interface CalSegment {
   instr: CalDirective[]; events: number; turns: CalTurn[]; tools: string[];
 }
 export interface CalRequirement {
-  id: string; sessionId: string; proj: string; req: string; day: number; events: number; messageId?: string;
+  id: string; sessionId: string; proj: string; req: string; day: number; events: number; messageId?: string; origin: CalOrigin;
 }
+export type CalOrigin = 'user' | 'subagent' | 'auto'
 export interface CalPerDay { day: number; dom: string; events: number; multi: boolean }
 export interface CalSession {
-  id: string; title: string; startDay: number; activeDays: number[];
+  id: string; title: string; origin: CalOrigin; userMsgCount: number; startDay: number; activeDays: number[];
   perDay: CalPerDay[]; segments: CalSegment[]; switches: number;
   nReq: number; nInstr: number; projects: string[];
 }
@@ -304,6 +305,7 @@ export function CalendarYarnRoot(props: CalProps) {
   const { data, onJump } = props;
   const [tab, setTab] = useState<'yarn' | 'matrix' | 'table'>('yarn');
   const [activeP, setActiveP] = useState<Set<string>>(new Set());
+  const [originOn, setOriginOn] = useState<Record<CalOrigin, boolean>>({ user: true, subagent: true, auto: false });
   const [onlyTangled, setOnlyTangled] = useState(false);
   const [onlyMultiDay, setOnlyMultiDay] = useState(false);
   const [selId, setSelId] = useState<string | null>(null);
@@ -311,7 +313,7 @@ export function CalendarYarnRoot(props: CalProps) {
   const toggleP = (id: string): void => setActiveP((prev) => {
     const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n;
   });
-  const list = useMemo(() => data.sessions.filter((s) => (activeP.size === 0 || s.projects.some((p) => activeP.has(p))) && (!onlyTangled || s.projects.length > 1) && (!onlyMultiDay || s.activeDays.length > 1)), [data, activeP, onlyTangled, onlyMultiDay]);
+  const list = useMemo(() => data.sessions.filter((s) => originOn[s.origin] && (activeP.size === 0 || s.projects.some((p) => activeP.has(p))) && (!onlyTangled || s.projects.length > 1) && (!onlyMultiDay || s.activeDays.length > 1)), [data, activeP, originOn, onlyTangled, onlyMultiDay]);
   const reqList = useMemo(() => data.requirements.filter((r) => list.some((s) => s.id === r.sessionId)), [data, list]);
   const tangled = list.filter((s) => s.projects.length > 1);
   const totReq = list.reduce((a, s) => a + s.nReq, 0);
@@ -324,9 +326,24 @@ export function CalendarYarnRoot(props: CalProps) {
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, flexWrap: 'wrap' }}>
           <div style={{ fontFamily: T.mono, fontSize: 14, letterSpacing: 1 }}>dsh-track<span style={{ color: T.faint }}> / </span><span style={{ color: T.muted }}>日历纱线</span></div>
           <div style={{ fontFamily: T.mono, fontSize: 10.5, color: T.muted }}>{list.length} sessions · <span style={{ color: GOLD }}>{tangled.length} 缠绕</span> · 需求 {totReq} · 指示 {totIns}</div>
+          <div style={{ fontFamily: T.mono, fontSize: 10, color: T.faint }}>用户 {data.sessions.filter((s) => s.origin === 'user').length} · 子代理 {data.sessions.filter((s) => s.origin === 'subagent').length} · 自动 {data.sessions.filter((s) => s.origin === 'auto').length}</div>
           <div style={{ marginLeft: 'auto', fontFamily: T.mono, fontSize: 9.5, color: T.faint }}>节点=需求(大小=事件量) · 虚线=会话线 · 金环=缠绕 · 切换按工作段计</div>
         </div>
         <div style={{ display: 'flex', gap: 6, margin: '10px 0', flexWrap: 'wrap' }}>
+          {(['user', 'subagent', 'auto'] as CalOrigin[]).map((o) => {
+            const label = o === 'user' ? '用户输入' : o === 'subagent' ? '子代理' : '自动';
+            const on = originOn[o];
+            const color = o === 'user' ? '#3FA79B' : o === 'subagent' ? '#5B8DE0' : '#8A97A6';
+            return (
+              <button key={o} onClick={() => setOriginOn((prev) => ({ ...prev, [o]: !prev[o] }))} style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer',
+                background: on ? rgba(color, 0.14) : 'transparent', border: '1px solid ' + (on ? rgba(color, 0.5) : T.line),
+                color: on ? T.text : T.faint, borderRadius: 3, padding: '1px 7px',
+                fontFamily: T.mono, fontSize: 10, lineHeight: 1.6,
+              }}><span style={{ width: 7, height: 7, borderRadius: 2, background: on ? color : T.faint }} />{label}</button>
+            );
+          })}
+          <span style={{ width: 12 }} />
           {data.projects.map((p) => {
             const on = activeP.size === 0 || activeP.has(p.id);
             return (

@@ -36,7 +36,9 @@ export interface CalRequirement {
     day: number;
     events: number;
     messageId?: string;
+    origin: CalOrigin;
 }
+export type CalOrigin = 'user' | 'subagent' | 'auto';
 export interface CalPerDay {
     day: number;
     dom: string;
@@ -46,6 +48,8 @@ export interface CalPerDay {
 export interface CalSession {
     id: string;
     title: string;
+    origin: CalOrigin;
+    userMsgCount: number;
     startDay: number;
     activeDays: number[];
     perDay: CalPerDay[];
