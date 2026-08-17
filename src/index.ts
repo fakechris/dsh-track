@@ -37,6 +37,7 @@ import { scanProjectCommits, type CommitScanResult } from './graph/commits.ts'
 import { buildLineage } from './graph/lineage.ts'
 import { relatedSessions, projectGraphView } from './graph/service.ts'
 import { buildEvolutionBrief } from './graph/brief.ts'
+import { buildCalendar } from './graph/calendar.ts'
 
 export const name = '@fakechris/dsh-track'
 export const inject = ['tools', 'storage']
@@ -1310,6 +1311,22 @@ export function apply(ctx: Context, config?: Config) {
           body.cwd,
           typeof body.max_sessions === 'number' ? body.max_sessions : 200,
         )
+      } else if (sessionQuery) {
+        // No cwd → build EVERY workspace's graphs (distinct cwds across the corpus),
+        // so the calendar/matrix see ALL projects (dsh-track, harness-ops, harness…).
+        const sq = sessionQuery as { listSessions(): Promise<Array<{ header: { cwd?: string } }>> }
+        const all = await sq.listSessions()
+        const cwds = [...new Set(all.map((s) => s.header.cwd).filter((c): c is string => typeof c === 'string' && c !== ''))]
+        const totals = { total: 0, built: 0, skipped: 0, failed: 0 }
+        for (const cwd of cwds) {
+          const r = await buildWorkspaceGraphs(
+            { sessionQuery: sessionQuery as GraphServiceDeps['sessionQuery'], store },
+            cwd,
+            typeof body.max_sessions === 'number' ? body.max_sessions : 200,
+          )
+          totals.total += r.total; totals.built += r.built; totals.skipped += r.skipped; totals.failed += r.failed
+        }
+        graphs = totals
       }
       const links = await writeSemanticLinks(store, dryRun)
       const projects = await induceProjects(store, dryRun)
@@ -1340,6 +1357,11 @@ export function apply(ctx: Context, config?: Config) {
         results.push({ cwd, result: await scanProjectCommits(store, cwd, { dryRun, limit }) })
       }
       json(res, { ok: true, dryRun, results })
+    })
+    // GET /api/track/calendar — calendar-yarn dataset over ALL projects.
+    registerRoute('/calendar', async (_req, res) => {
+      await ensureStoreOpen()
+      json(res, { ok: true, calendar: await buildCalendar(store) })
     })
     // GET /api/track/graph/view[?projectId= | ?cwd=] — project-level graph for the visual tab.
     registerRoute('/graph/view', async (req, res) => {

@@ -52,7 +52,7 @@ const cite = (sessionId: string, a: number, b: number): GraphCitation => ({ sess
 
 /** Builder schema version — bump on shape changes; stored graphs older than
  *  this are stale and get rebuilt (service freshness check). */
-export const GRAPH_VERSION = 2
+export const GRAPH_VERSION = 3
 
 interface BuilderState {
   sessionId: string
@@ -257,6 +257,22 @@ export function buildSessionGraph(
       }
       case 'turn/end': {
         st.curTurn = undefined
+        // Record the turn outcome (calendar-yarn ✓/⊘/✕) from reason.kind.
+        const reason = (data.reason as { kind?: string } | undefined)?.kind
+        const outcome = reason === 'completed' ? 'completed'
+          : reason === 'aborted' ? 'aborted'
+          : reason === 'error' || reason === 'max-tokens' ? 'error'
+          : reason === 'blocked' ? 'blocked' : undefined
+        const turn = data.turn as number | undefined
+        if (typeof turn === 'number') {
+          const tid = st.turnById.get(turn)
+          const node = tid !== undefined ? st.nodes.get(tid) : undefined
+          if (node !== undefined) {
+            // The turn node now covers its whole range (turn/start .. turn/end).
+            node.citation = { ...node.citation, seqEnd: Math.max(node.citation.seqEnd, seq) }
+            if (outcome !== undefined) node.outcome = outcome
+          }
+        }
         break;
       }
       default:

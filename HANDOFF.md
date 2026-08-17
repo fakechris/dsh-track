@@ -1,12 +1,13 @@
-# HANDOFF — 图谱只占中间内容格、侧边栏保留部署（2026-08-17）
+# HANDOFF — 会话来源分类（用户/子代理/自动）部署（2026-08-17）
 
-## 修复（用户反馈第四轮）
-- 图谱 = grid-column 1 / grid-row 2（chat 消息的确切格子）+ z-index 10 + 实底，盖住 scroll body
-- 绝不隐藏右侧边栏（Track 面板）——像 Chat 切换一样只换中间内容；tab 行不动
-- 图 tab 不再关闭面板
-- 分支 feat/session-graph-m1 @ 4d6f2dd
+## 内容（用户反馈：自动拉的 session 污染事实源）
+- 分类规则：subagent（header.origin/delegationDepth）> user（有真实用户话语）> auto（零用户消息）
+- 实测 151 会话：99 用户 / 39 子代理 / 13 自动
+- calendar.ts：CalSession.origin + userMsgCount；CalRequirement.origin
+- calendar-yarn.tsx：用户输入/子代理/自动 筛选 chips（子代理+自动默认隐藏，只看纯用户输入）+ 头部计数
+- 分支 feat/calendar-yarn @ 264eb41；269/269 单测
 
 ## 重启后验收
-1. 硬刷新 → 打开右侧栏（FAB ◆）→ 点「会话结构图」：中间内容区换图，右侧栏和 tab 行保留
-2. 切回 Chat：正常
-3. push
+1. 硬刷新 → 视图头部显示 用户/子代理/自动 计数；子代理+自动会话默认被过滤（只看纯用户输入）
+2. 点「自动」chip 可看被过滤的会话
+3. push（PR #76）

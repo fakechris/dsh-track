@@ -13,7 +13,7 @@
 import { conversationContextKey } from '@deepseek-ai/dsh-client-runtime/client'
 import type { ClientContext, ISessions, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { Capture, Issue } from '../types.ts'
-import { mountGraphForce, type GFData } from './graph-force.tsx'
+import { mountCalendar, type CalData, type CalJump } from './calendar-yarn.tsx'
 
 /** Stable ids for the injected panel and toggle. */
 export const PANEL_ID = 'dsh-track-panel'
@@ -1133,20 +1133,17 @@ async function renderGraph(): Promise<void> {
     const d = await fetch('/api/track/graph?sessionId=' + encodeURIComponent(sessionId)).then((r) => r.json())
     cwd = d.doc?.header?.cwd ?? ''
   } catch { cwd = '' }
-  let view: GVDataLite = { nodes: [], edges: [] }
+  let cal: CalData | null = null
   try {
-    const q = cwd !== '' ? 'cwd=' + encodeURIComponent(cwd) : 'projectId='
-    const r = await fetch('/api/track/graph/view?' + q).then((r) => r.json())
-    view = r.view ?? view
-  } catch { /* keep empty */ }
-  if (view.nodes.length === 0) {
-    el.innerHTML = '<div class="inv-empty">暂无图谱数据 — 点「构建」生成会话图后重试</div>'
+    const r = await fetch('/api/track/calendar?cwd=' + encodeURIComponent(cwd)).then((r) => r.json())
+    cal = r.calendar ?? null
+  } catch { cal = null }
+  if (cal === null || cal.sessions.length === 0) {
+    el.innerHTML = '<div class="inv-empty">暂无日历数据 — 点「构建」生成会话图后重试</div>'
     return
   }
-  mountGraphForce(el, view as GFData, (n) => {
-    if (n.kind === 'session' && n.sessionId) void jumpToConversation({ sessionId: n.sessionId })
-    else if (n.kind === 'issue' && n.sessionId) void jumpToConversation({ sessionId: n.sessionId, messageId: n.messageId })
-  })
+  const jump = (j: CalJump): void => { void jumpToConversation({ sessionId: j.sessionId, messageId: j.messageId }) }
+  mountCalendar(el, cal, jump)
 }
 
 /** Build the current session's graph (POST) then re-render. */
