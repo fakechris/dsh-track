@@ -41,7 +41,7 @@ describe('buildCalendar', () => {
     await store.upsertIssue(issueA);
     await store.upsertLink({ id: 'track_link_ca', fromType: 'issue', fromId: 'track_issue_ca', toType: 'session', toId: 'c1', kind: 'executed-in', createdAt: new Date().toISOString(), linkMethod: 'session-link' } as never);
 
-    const cal = await buildCalendar(store, CWD, 18, BASE + DAY + 3000);
+    const cal = await buildCalendar(store);
     expect(cal.sessions).toHaveLength(1);
     const s = cal.sessions[0]!;
     expect(s.nReq).toBe(1);
@@ -52,8 +52,12 @@ describe('buildCalendar', () => {
     // Active across two days (需求二 user message on day+1 counts as activity).
     expect(s.perDay.length).toBeGreaterThanOrEqual(2);
     expect(s.switches).toBe(0);
-    // Calendar renders days with a base label.
-    expect(cal.days).toBe(18);
+    // Yarn nodes = REQUIREMENTS (issue), not sessions.
+    expect(cal.requirements).toHaveLength(1);
+    expect(cal.requirements[0]?.req).toBe('需求一');
+    expect(cal.requirements[0]?.proj).toBe(projA);
+    // Day window derives from the DATA range (no empty leading days).
+    expect(cal.days).toBeLessThanOrEqual(18);
     expect(cal.projects.some((p) => p.id === projA)).toBe(true);
   })
 });

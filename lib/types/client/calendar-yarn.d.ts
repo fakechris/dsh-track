@@ -1,8 +1,8 @@
 /**
- * Calendar-yarn view for the 会话结构图 tab — adapted from the design mock
- * (dsh-track-calendar-yarn.jsx): sessions as lines across natural days,
- * project lanes, per-day activity nodes, drill-down segment sequence.
- * Key nodes are clickable to jump into the conversation.
+ * Calendar-yarn view — 3 tabs (日历纱线 / 矩阵 / 会话表), ported from the
+ * dsh-track-calendar-yarn design. Yarn nodes = REQUIREMENTS (issues/captures)
+ * on a day×project grid; sessions thread their requirements. Key nodes are
+ * clickable to jump into the conversation.
  * @module @fakechris/dsh-track/client/calendar-yarn
  */
 export interface CalProject {
@@ -28,6 +28,15 @@ export interface CalSegment {
     turns: CalTurn[];
     tools: string[];
 }
+export interface CalRequirement {
+    id: string;
+    sessionId: string;
+    proj: string;
+    req: string;
+    day: number;
+    events: number;
+    messageId?: string;
+}
 export interface CalPerDay {
     day: number;
     dom: string;
@@ -51,6 +60,7 @@ export interface CalData {
     dayBase: string;
     projects: CalProject[];
     sessions: CalSession[];
+    requirements: CalRequirement[];
 }
 export interface CalJump {
     sessionId: string;
@@ -60,7 +70,7 @@ export interface CalProps {
     data: CalData;
     onJump: (j: CalJump) => void;
 }
-/** Root: main yarn + drill-down drawer + table, all in one scrollable column. */
+/** Root: 3 tabs + header + filters + drill-down. */
 export declare function CalendarYarnRoot(props: CalProps): import("react").JSX.Element;
-/** Mount (or re-mount) the calendar-yarn view into a container. */
+/** Mount (or re-mount) the calendar view into a container. */
 export declare function mountCalendar(container: HTMLElement, data: CalData, onJump: (j: CalJump) => void): void;

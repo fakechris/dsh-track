@@ -1,49 +1,55 @@
 /**
- * Calendar-yarn data (v1) — the 会话结构图 tab's main view. Deterministic
- * projection of the store: sessions as lines across natural days, per-day
- * dominant project lanes, work segments (requirement + directives + turn
- * outcomes) derived from executed-in issues + the v3 session graph. The
- * 'requirement vs directive' split is an approximation of the utterance
- * extraction — the drill-down doubles as its acceptance tool.
+ * Calendar-yarn data v2 — ALL projects, requirement-level nodes, data-range
+ * day window. The yarn plots REQUIREMENTS (issues/captures) on a day×project
+ * grid; sessions thread their requirements. Matches the design mock's data
+ * model (matrix/table views consume the same projection).
  * @module @fakechris/dsh-track/graph/calendar
  */
 import type { TrackStore } from '../store.ts';
-export interface CalendarProject {
+export interface CalProject {
     id: string;
     name: string;
     hue: string;
 }
-export interface CalendarTurn {
+export interface CalTurn {
     outcome: 'completed' | 'aborted' | 'error' | 'blocked';
 }
-export interface CalendarDirective {
+export interface CalDirective {
     text: string;
     messageId?: string;
 }
-export interface CalendarSegment {
+export interface CalSegment {
     day: number;
     proj: string;
     req: string;
     reqMessageId?: string;
     sessionId: string;
-    instr: CalendarDirective[];
+    instr: CalDirective[];
     events: number;
-    turns: CalendarTurn[];
+    turns: CalTurn[];
     tools: string[];
 }
-export interface CalendarPerDay {
+export interface CalRequirement {
+    id: string;
+    sessionId: string;
+    proj: string;
+    req: string;
     day: number;
-    dom: string;
     events: number;
-    multi: boolean;
+    messageId?: string;
 }
-export interface CalendarSession {
+export interface CalSession {
     id: string;
     title: string;
     startDay: number;
     activeDays: number[];
-    perDay: CalendarPerDay[];
-    segments: CalendarSegment[];
+    perDay: Array<{
+        day: number;
+        dom: string;
+        events: number;
+        multi: boolean;
+    }>;
+    segments: CalSegment[];
     switches: number;
     nReq: number;
     nInstr: number;
@@ -52,18 +58,16 @@ export interface CalendarSession {
 export interface CalendarData {
     days: number;
     dayBase: string;
-    projects: CalendarProject[];
-    sessions: CalendarSession[];
+    projects: CalProject[];
+    sessions: CalSession[];
+    requirements: CalRequirement[];
 }
-/** Deterministic hue from a project id (stable across re-runs). */
+export declare const UNK_ID = "unk";
 export declare function hueFor(id: string): string;
-/** Day label (MM-DD) for a window day. */
 export declare function dayLabel(day: number, base: number): string;
 /**
- * Build the calendar-yarn dataset for one project (cwd).
+ * Build the calendar dataset over the WHOLE store (all projects).
  * @param store track store.
- * @param cwd project workspace path.
- * @param days window length (default 18).
- * @param now injectable clock.
+ * @param maxDays window cap (default 18).
  */
-export declare function buildCalendar(store: TrackStore, cwd: string, days?: number, now?: number): Promise<CalendarData>;
+export declare function buildCalendar(store: TrackStore, maxDays?: number): Promise<CalendarData>;
