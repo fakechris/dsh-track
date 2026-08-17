@@ -1,13 +1,13 @@
-# HANDOFF — 会话来源分类（用户/子代理/自动）部署（2026-08-17）
+# HANDOFF — 纱线连线恢复 + 滚动联动（2026-08-17）
 
-## 内容（用户反馈：自动拉的 session 污染事实源）
-- 分类规则：subagent（header.origin/delegationDepth）> user（有真实用户话语）> auto（零用户消息）
-- 实测 151 会话：99 用户 / 39 子代理 / 13 自动
-- calendar.ts：CalSession.origin + userMsgCount；CalRequirement.origin
-- calendar-yarn.tsx：用户输入/子代理/自动 筛选 chips（子代理+自动默认隐藏，只看纯用户输入）+ 头部计数
-- 分支 feat/calendar-yarn @ 264eb41；269/269 单测
+## 内容
+- PR #76（feat/calendar-yarn）已 squash merge 进 main（7067d5a → merged 2026-08-17）
+- 修复 A「线没了」：线程不再要求 ≥2 需求；每会话画项目色贝塞尔连线（连续日实线/跨日虚线）+ id 标签 + 终止标记
+- 修复 B「不联动」：左侧泳道标签 + 顶部日期表头放入同一滚动容器（sticky left/top），纵向滚动同步对齐
+- 分支 feat/yarn-threads @ 09044d2；PR #77 open；269+ 单测全绿
+- 已 rsync lib/ 到 3080 vendored 副本（client 改动，硬刷新即可）
 
 ## 重启后验收
-1. 硬刷新 → 视图头部显示 用户/子代理/自动 计数；子代理+自动会话默认被过滤（只看纯用户输入）
-2. 点「自动」chip 可看被过滤的会话
-3. push（PR #76）
+1. 硬刷新 3080 → 日历纱线：每个会话有彩色连线（单需求会话也有 id + 终止线）
+2. 上下滚动：左侧项目泳道标签跟随纱线同步移动，不再错位
+3. 横向滚动：日期表头保持固定
