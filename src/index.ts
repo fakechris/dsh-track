@@ -37,6 +37,7 @@ import { scanProjectCommits, type CommitScanResult } from './graph/commits.ts'
 import { buildLineage } from './graph/lineage.ts'
 import { relatedSessions, projectGraphView } from './graph/service.ts'
 import { buildEvolutionBrief } from './graph/brief.ts'
+import { buildCalendar } from './graph/calendar.ts'
 
 export const name = '@fakechris/dsh-track'
 export const inject = ['tools', 'storage']
@@ -1340,6 +1341,14 @@ export function apply(ctx: Context, config?: Config) {
         results.push({ cwd, result: await scanProjectCommits(store, cwd, { dryRun, limit }) })
       }
       json(res, { ok: true, dryRun, results })
+    })
+    // GET /api/track/calendar?cwd= — calendar-yarn dataset for the 会话结构图 tab.
+    registerRoute('/calendar', async (req, res) => {
+      await ensureStoreOpen()
+      const url = new URL(req.url ?? '/', 'http://x')
+      const cwd = url.searchParams.get('cwd') ?? ''
+      if (!cwd) { json(res, { error: 'cwd required' }, 400); return }
+      json(res, { ok: true, calendar: await buildCalendar(store, cwd) })
     })
     // GET /api/track/graph/view[?projectId= | ?cwd=] — project-level graph for the visual tab.
     registerRoute('/graph/view', async (req, res) => {

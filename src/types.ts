@@ -281,6 +281,8 @@ export interface GraphNode {
   messageId?: string
   /** Whether the paired tool/result carried an error-ish payload. */
   toolError?: boolean
+  /** Turn outcome (from turn/end reason.kind) — the calendar-yarn ✓/⊘/✕. */
+  outcome?: 'completed' | 'aborted' | 'error' | 'blocked'
   /** Header facts on the session root node only. */
   parentSessionId?: string
   origin?: 'subagent'
