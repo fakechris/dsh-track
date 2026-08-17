@@ -1,8 +1,7 @@
-# HANDOFF — 交互式力导向图部署（2026-08-16）
+# HANDOFF — 图移到主区域（Chat 槽位）部署（2026-08-16/17）
 
-## 内容（用户反馈第三轮）
+## 修复
 
-## 验收结果（最终）
-- vendored client.js = 459KB（含 react-force-graph-2d）
-- /api/track/graph/view 正常
+## 验收结果
+- vendored client.js 含 dsh-track-graphview（全区域容器）
 - 分支已 push（PR #74）
