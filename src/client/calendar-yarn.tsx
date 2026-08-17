@@ -102,30 +102,47 @@ function YarnView(props: {
   const px = (r: CalRequirement): number => r.day * DAY_W + DAY_W / 2 + ((r.sessionId.length * 7) % 11) - 5;
   const py = (r: CalRequirement): number => laneY(r.proj) + (dodge[r.id] ?? 0);
   return (
-    <div style={{ display: 'flex', height: '100%', minHeight: 0 }}>
-      <div style={{ width: 104, flexShrink: 0, position: 'relative', borderRight: '1px solid ' + T.line }}>
-        {lanes.map((l) => (
-          <div key={l.id} style={{ position: 'absolute', top: laneY(l.id) - 9, right: 10, fontFamily: T.mono, fontSize: 10.5, color: l.hue }}>{l.name.length > 10 ? l.name.slice(0, 10) + '…' : l.name}</div>
-        ))}
-      </div>
-      <div style={{ flex: 1, overflow: 'auto' }}>
-        <svg width={W} height={H} style={{ display: 'block' }}>
+    <div style={{ flex: 1, overflow: 'auto', minWidth: 0, position: 'relative' }}>
+      <div style={{ position: 'relative', width: 104 + W, height: H }}>
+        <div style={{ position: 'sticky', top: 0, width: 104 + W, height: TOPH, background: T.bg, zIndex: 2 }}>
+          {Array.from({ length: data.days }, (_, d) => (
+            <span key={d} style={{ position: 'absolute', left: 104 + d * DAY_W + DAY_W / 2, transform: 'translateX(-50%)', top: 9, fontFamily: T.mono, fontSize: 9, color: T.faint }}>{dayLabelOf(base, d)}</span>
+          ))}
+        </div>
+        <div style={{ position: 'sticky', left: 0, width: 104, height: H, background: T.bg, borderRight: '1px solid ' + T.line, zIndex: 3 }}>
+          {lanes.map((l) => (
+            <div key={l.id} style={{ position: 'absolute', top: laneY(l.id) - 9, right: 10, fontFamily: T.mono, fontSize: 10.5, color: l.hue }}>{l.name.length > 10 ? l.name.slice(0, 10) + '…' : l.name}</div>
+          ))}
+        </div>
+        <svg width={W} height={H} style={{ position: 'absolute', left: 104, top: 0, display: 'block' }}>
           {lanes.map((l, k) => (
             <rect key={l.id} x={0} y={TOPH + k * LANE_H} width={W} height={LANE_H} fill={l.id === 'unk' ? 'rgba(90,102,116,0.05)' : rgba(l.hue, k % 2 ? 0.045 : 0.028)} />
           ))}
           {Array.from({ length: data.days }, (_, d) => (
             <g key={d}>
               <line x1={d * DAY_W} y1={TOPH} x2={d * DAY_W} y2={H - 10} stroke='#1C242F' strokeWidth={0.7} />
-              <text x={d * DAY_W + DAY_W / 2} y={16} textAnchor='middle' fill={T.faint} fontSize={9} fontFamily={T.mono}>{dayLabelOf(base, d)}</text>
             </g>
           ))}
           {[...threads.entries()].map(([sid, reqs]) => {
             const dimmed = focus !== null && focus !== sid;
-            if (reqs.length < 2) return null;
             const pts = reqs.map((r) => ({ x: px(r), y: py(r) }));
+            const last = pts[pts.length - 1];
             return (
-              <path key={'t' + sid} d={pts.map((p, k) => (k === 0 ? 'M ' + p.x + ' ' + p.y : ' L ' + p.x + ' ' + p.y)).join(' ')}
-                fill='none' stroke={T.line} strokeWidth={1.2} strokeDasharray='2 3' opacity={dimmed ? 0.2 : 0.7} />
+              <g key={'t' + sid} opacity={dimmed ? 0.14 : 1}>
+                {pts.slice(1).map((p, k) => {
+                  const a = pts[k];
+                  const mx = (a.x + p.x) / 2;
+                  const gap = reqs[k + 1].day - reqs[k].day > 1;
+                  return (
+                    <path key={k} d={'M ' + a.x + ' ' + a.y + ' C ' + mx + ' ' + a.y + ', ' + mx + ' ' + p.y + ', ' + p.x + ' ' + p.y}
+                      fill='none' stroke={hueOf(reqs[k + 1].proj)} strokeWidth={1.7}
+                      strokeDasharray={gap ? '3 4' : 'none'} opacity={0.8} />
+                  );
+                })}
+                <text x={pts[0].x} y={pts[0].y - (4 + Math.sqrt(reqs[0].events) / 2.2) - 5} textAnchor='middle'
+                  fill={dimmed ? T.faint : T.muted} fontSize={8.5} fontFamily={T.mono}>{sid.slice(0, 6)}</text>
+                <line x1={last.x + 9} y1={last.y - 5} x2={last.x + 9} y2={last.y + 5} stroke={T.muted} strokeWidth={1.6} />
+              </g>
             );
           })}
           {data.requirements.map((r) => {
