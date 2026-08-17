@@ -1,7 +1,7 @@
-# HANDOFF — 图移到主区域（Chat 槽位）部署（2026-08-16/17）
+# HANDOFF — 图占据 chat 内容格（tab 行保持可见）部署（2026-08-17）
 
-## 修复
+## 修复（用户反馈：图挂到 tab 行上面了）
 
-## 验收结果
-- vendored client.js 含 dsh-track-graphview（全区域容器）
+## 验收
+- vendored client.js 含 grid-column: 1 的 chat 内容格定位
 - 分支已 push（PR #74）
