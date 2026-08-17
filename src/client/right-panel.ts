@@ -245,14 +245,6 @@ function buildPanelHtml(): string {
       <div class="inv-issue-pager"></div>
     </div>
   </div>
-  <div class="inv-graphview" hidden>
-    <div class="inv-graphview-head">
-      <span class="inv-title">会话结构图 <span class="inv-graph-session"></span></span>
-      <button class="inv-act inv-graph-build" title="构建当前会话的执行树">构建</button>
-      <button class="inv-act inv-graph-buildall" title="批量构建本工作区所有会话的图">全构建</button>
-    </div>
-    <div class="inv-graph"></div>
-  </div>
   <div class="inv-width-resizer" title="拖动调整面板宽度"></div>
   `
 }
@@ -518,6 +510,29 @@ const PANEL_CSS = `
   position: absolute; left: -3px; top: 0; bottom: 0; width: 6px;
   cursor: col-resize; z-index: 2;
 }
+
+/* Full-area graph view (direct child of the conversation root — takes Chat's slot). */
+#dsh-track-graphview {
+  grid-column: 1 / -1 !important;
+  grid-row: 1 / -1 !important;
+  width: 100%; height: 100%;
+  display: flex; flex-direction: column;
+  background: var(--dsw-alias-bg-base, #fff);
+  color: var(--dsw-alias-label-primary, #171719);
+  position: relative; z-index: 5;
+}
+#dsh-track-graphview[hidden] { display: none; }
+#dsh-track-graphview .inv-graphview-head {
+  display: flex; align-items: center; gap: 8px; padding: 0 12px;
+  height: 38px; border-bottom: 1px solid var(--dsw-alias-border-l1, rgba(0,0,0,.06)); flex: none;
+}
+#dsh-track-graphview .inv-title { flex: 1; font-weight: 600; font-size: 13px; }
+#dsh-track-graphview .inv-act {
+  padding: 2px 8px; border: 1px solid var(--dsw-alias-border-l2, rgba(0,0,0,.15));
+  border-radius: 5px; background: transparent; color: var(--dsw-alias-label-secondary, #555);
+  font-size: 11.5px; cursor: pointer;
+}
+#dsh-track-graphview .inv-graph { flex: 1; min-height: 0; position: relative; overflow: hidden; }
 `
 
 /** ---- mounting ---- */
@@ -1102,8 +1117,8 @@ function renderGraphHtml(doc: GraphDocLite, sessionId: string): string {
 /** Fetch + render the PROJECT graph (multi-session visual graph) into the tab. */
 async function renderGraph(): Promise<void> {
   if (panel === null) return
-  const el = panel.querySelector<HTMLElement>('.inv-graph')
-  const title = panel.querySelector('.inv-graph-session')
+  const el = document.querySelector<HTMLElement>('#dsh-track-graphview .inv-graph')
+  const title = document.querySelector('.inv-graph-session')
   if (el === null) return
   const sessionId = activeSessionId()
   if (sessionId === undefined || sessionId === '') {
@@ -1172,6 +1187,7 @@ async function buildAllGraphs(): Promise<void> {
 function restoreLayout(): void {
   graphTab?.remove()
   graphTab = null
+  document.getElementById('dsh-track-graphview')?.remove()
   if (host === null) return
   host.candidate.classList.remove('inv-host')
   if (host.header !== null) host.header.classList.remove('inv-host-header')
@@ -1189,18 +1205,27 @@ let graphTab: HTMLButtonElement | null = null
  *  area (same size as the Chat Trajectory tab). */
 function setGraphMode(open: boolean): void {
   graphMode = open
-  const body = panel?.querySelector<HTMLElement>('.inv-body')
-  const gv = panel?.querySelector<HTMLElement>('.inv-graphview')
-  if (body !== null && body !== undefined) body.hidden = open
-  if (gv !== null && gv !== undefined) gv.hidden = !open
-  // The graph view takes Chat's position: hide the chat scroll body and the
-  // header rows so the whole main area shows the graph (a real tab switch).
+  // The graph takes Chat's position: a full-area container that is a DIRECT
+  // grid child of the conversation root (grid-column 1 / -1), not a panel child.
+  let gv = document.getElementById('dsh-track-graphview')
+  if (open && gv === null && host !== null) {
+    gv = document.createElement('div')
+    gv.id = 'dsh-track-graphview'
+    gv.innerHTML = '<div class="inv-graphview-head">'
+      + '<span class="inv-title">会话结构图 <span class="inv-graph-session"></span></span>'
+      + '<button class="inv-act inv-graph-build" title="构建当前会话的执行树">构建</button>'
+      + '<button class="inv-act inv-graph-buildall" title="批量构建本工作区所有会话的图">全构建</button>'
+      + '</div><div class="inv-graph"></div>'
+    host.candidate.append(gv)
+  }
   if (host !== null) {
+    // Hide the chat + header rows so the graph occupies the exact Chat slot.
     if (host.scrollBody !== null) host.scrollBody.style.display = open ? 'none' : ''
     if (host.header !== null) host.header.style.display = open ? 'none' : ''
     if (host.headerWrapper !== null) host.headerWrapper.style.display = open ? 'none' : ''
-    host.candidate.style.gridTemplateColumns = open ? 'minmax(0, 1fr)' : ''
   }
+  if (panel !== null) panel.hidden = open || !panelOpen
+  if (gv !== null) gv.hidden = !open
   if (graphTab !== null) graphTab.setAttribute('aria-selected', String(open))
   if (open) { void renderGraph() }
 }
@@ -1299,7 +1324,7 @@ function mountTab(): void {
   // exits the graph view back to the conversation.
   const gtab = makeTab('会话结构图')
   gtab.setAttribute('aria-selected', String(false))
-  gtab.addEventListener('click', () => { setPanelOpen(true); setGraphMode(true) })
+  gtab.addEventListener('click', () => { setPanelOpen(false); setGraphMode(true) })
   graphTab = gtab
   // Delegated: any native (non-inv) tab click exits the graph view.
   tl.addEventListener('click', (ev) => {
