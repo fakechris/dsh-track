@@ -305,7 +305,7 @@ export function CalendarYarnRoot(props: CalProps) {
   const { data, onJump } = props;
   const [tab, setTab] = useState<'yarn' | 'matrix' | 'table'>('yarn');
   const [activeP, setActiveP] = useState<Set<string>>(new Set());
-  const [originOn, setOriginOn] = useState<Record<CalOrigin, boolean>>({ user: true, subagent: true, auto: false });
+  const [originOn, setOriginOn] = useState<Record<CalOrigin, boolean>>({ user: true, subagent: false, auto: false });
   const [onlyTangled, setOnlyTangled] = useState(false);
   const [onlyMultiDay, setOnlyMultiDay] = useState(false);
   const [selId, setSelId] = useState<string | null>(null);
