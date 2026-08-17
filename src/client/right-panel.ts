@@ -13,6 +13,7 @@
 import { conversationContextKey } from '@deepseek-ai/dsh-client-runtime/client'
 import type { ClientContext, ISessions, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { Capture, Issue } from '../types.ts'
+import { mountGraphForce, type GFData } from './graph-force.tsx'
 
 /** Stable ids for the injected panel and toggle. */
 export const PANEL_ID = 'dsh-track-panel'
@@ -467,10 +468,71 @@ const PANEL_CSS = `
 #${PANEL_ID} .inv-act.inv-done { color: #1a7f37; border-color: rgba(46,160,67,.4); }
 #${PANEL_ID} .inv-act.inv-done:hover { background: rgba(46,160,67,.1); }
 #${PANEL_ID} .inv-empty { opacity: .5; font-size: 12px; font-style: italic; }
+#${PANEL_ID} .inv-lineage { border-top: 1px dashed var(--dsw-alias-border-l1, rgba(0,0,0,.1)); padding: 6px 9px; display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+#${PANEL_ID} .inv-lineage[hidden] { display: none; }
+#${PANEL_ID} .inv-lg-title { font-weight: 600; margin-bottom: 2px; }
+#${PANEL_ID} .inv-lg-group { font-size: 10.5px; font-weight: 600; text-transform: uppercase; opacity: .55; margin-top: 5px; }
+#${PANEL_ID} .inv-lg-row { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#${PANEL_ID} .inv-lg-msg { padding-left: 12px; color: var(--dsw-alias-label-secondary, #555); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#${PANEL_ID} .inv-graphview { position: relative; z-index: 1; grid-column: 1 / -1 !important; grid-row: 1 / -1 !important; width: 100%; height: 100%; display: flex; flex-direction: column; background: var(--dsw-alias-bg-base, #fff); overflow: hidden; }
+#${PANEL_ID} .inv-graphview[hidden] { display: none; }
+#${PANEL_ID} .inv-graphview-head { display: flex; align-items: center; gap: 8px; padding: 0 10px; height: 36px; border-bottom: 1px solid var(--dsw-alias-border-l1, rgba(0,0,0,.06)); flex: none; }
+#${PANEL_ID} .inv-graphview .inv-graph { flex: 1; min-height: 0; position: relative; overflow: hidden; padding: 0; }
+#${PANEL_ID} .inv-related { border-top: 1px dashed var(--dsw-alias-border-l1, rgba(0,0,0,.1)); padding: 6px 10px; font-size: 12px; }
+#${PANEL_ID} .gv-svg { display: block; }
+#${PANEL_ID} .gv-edge { stroke: rgba(0,0,0,.15); stroke-width: 1; }
+#${PANEL_ID} .gv-executed-in { stroke: rgba(26,127,55,.35); }
+#${PANEL_ID} .gv-landed-in { stroke: rgba(138,143,152,.5); stroke-dasharray: 3 2; }
+#${PANEL_ID} .gv-implements { stroke: rgba(26,127,55,.6); }
+#${PANEL_ID} .gv-forked-from { stroke: rgba(76,141,255,.5); }
+#${PANEL_ID} .gv-raised-in { stroke: rgba(232,133,60,.4); }
+#${PANEL_ID} .gv-node { cursor: default; }
+#${PANEL_ID} .gv-node.gv-click { cursor: pointer; }
+#${PANEL_ID} .gv-node.gv-click:hover circle { stroke: #333; stroke-width: 2; }
+#${PANEL_ID} .gv-label { font-size: 10px; fill: var(--dsw-alias-label-secondary, #555); }
+#${PANEL_ID} .gv-legend-bar { display: flex; gap: 12px; flex-wrap: wrap; padding: 6px 10px; font-size: 11px; opacity: .7; }
+#${PANEL_ID} .gv-legend { display: inline-flex; align-items: center; gap: 4px; }
+#${PANEL_ID} .gv-legend i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+#${PANEL_ID} .gv-hint { position: absolute; top: 40px; right: 14px; font-size: 11px; opacity: .5; }
+#${PANEL_ID} .inv-graph { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+#${PANEL_ID} .inv-groot { padding: 6px 8px; border: 1px solid var(--dsw-alias-border-l1, rgba(0,0,0,.12)); border-radius: 6px; font-weight: 600; }
+#${PANEL_ID} .inv-gmeta { font-size: 10.5px; opacity: .6; font-weight: 400; }
+#${PANEL_ID} .inv-gturn { margin: 2px 0 0 6px; padding-left: 8px; border-left: 2px solid var(--dsw-alias-border-l2, rgba(0,0,0,.12)); }
+#${PANEL_ID} .inv-gturn summary { cursor: pointer; padding: 2px 0; opacity: .9; }
+#${PANEL_ID} .inv-gnode { padding: 1px 0 1px 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#${PANEL_ID} .inv-gtool { padding: 1px 0 1px 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#${PANEL_ID} .inv-gtool.inv-gerr { color: #e5484d; }
+#${PANEL_ID} .inv-gseq { opacity: .45; font-size: 10.5px; margin-left: 4px; }
+#${PANEL_ID} .inv-guser { padding: 1px 0 1px 10px; display: flex; gap: 6px; align-items: baseline; }
+#${PANEL_ID} .inv-guser-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+#${PANEL_ID} .inv-gfork { margin-left: 8px; }
 #${PANEL_ID} .inv-width-resizer {
   position: absolute; left: -3px; top: 0; bottom: 0; width: 6px;
   cursor: col-resize; z-index: 2;
 }
+
+/* Full-area graph view (direct child of the conversation root — takes Chat's slot). */
+#dsh-track-graphview {
+  grid-column: 1 !important;
+  grid-row: 2 !important;
+  width: 100%; height: 100%;
+  display: flex; flex-direction: column;
+  background: var(--dsw-alias-bg-base, #fff);
+  color: var(--dsw-alias-label-primary, #171719);
+  position: relative; z-index: 10;
+}
+#dsh-track-graphview[hidden] { display: none; }
+#dsh-track-graphview .inv-graphview-head {
+  display: flex; align-items: center; gap: 8px; padding: 0 12px;
+  height: 38px; border-bottom: 1px solid var(--dsw-alias-border-l1, rgba(0,0,0,.06)); flex: none;
+}
+#dsh-track-graphview .inv-title { flex: 1; font-weight: 600; font-size: 13px; }
+#dsh-track-graphview .inv-act {
+  padding: 2px 8px; border: 1px solid var(--dsw-alias-border-l2, rgba(0,0,0,.15));
+  border-radius: 5px; background: transparent; color: var(--dsw-alias-label-secondary, #555);
+  font-size: 11.5px; cursor: pointer;
+}
+#dsh-track-graphview .inv-graph { flex: 1; min-height: 0; position: relative; overflow: hidden; }
 `
 
 /** ---- mounting ---- */
@@ -728,10 +790,11 @@ function renderIssueCard(i: Issue): string {
     ? `<span class="inv-confirm-hint">确认删除任务？</span>` +
       `<button class="inv-act inv-danger" data-issue-del="${i.id}">确认</button>` +
       `<button class="inv-act" data-issue-cancel="1">取消</button>`
-    : `${jump}${actionButtons}<button class="inv-act" data-issue-del-ask="${i.id}">删除</button>`
+    : `${jump}<button class="inv-act inv-jump" data-lineage="${i.id}" title="查看需求谱系：为什么存在 / 来自哪几句原话 / 被谁取代 / 落在哪个 commit">谱系</button>${actionButtons}<button class="inv-act" data-issue-del-ask="${i.id}">删除</button>`
   const detail = expanded
     ? `<div class="inv-issue-detail">${renderIssueDetail(i)}</div>`
     : ''
+  const lineageBox = '<div class="inv-lineage" data-lineage-box="' + i.id + '" hidden></div>'
   return (
     `<div class="inv-card inv-issue-card${expanded ? ' inv-expanded' : ''}" data-id="${i.id}">` +
       `<div class="inv-issue-header" data-issue-toggle="${i.id}">` +
@@ -742,6 +805,7 @@ function renderIssueCard(i: Issue): string {
         `<span class="inv-chevron">${expanded ? '▾' : '▸'}</span>` +
       `</div>` +
       detail +
+      lineageBox +
       `<div class="inv-actions">${actions}</div>` +
     `</div>`
   )
@@ -774,6 +838,143 @@ function renderIssueDetail(i: Issue): string {
   return parts.join('')
 }
 
+/** Render the lineage view HTML (Why/lineage lens). */
+interface LineageViewLite {
+  target: { id: string; kind: string; title: string; state?: string; origin?: string }
+  neighbors: Record<string, { id: string; kind: string; title: string; meta?: Record<string, string | undefined> }>
+  evidence: Array<{ sessionId: string; seqStart: number; seqEnd: number; kind: string; promptMessageId?: string; userMessages: Array<{ messageId?: string; title: string; seqStart: number; seqEnd: number }> }>
+  commits: Array<{ id: string; sha: string; subject: string; authorAt: number }>
+  edges: Array<{ kind: string; fromId: string; toId: string; linkMethod?: string; direction: 'out' | 'in' }>
+}
+
+function renderLineageHtml(view: LineageViewLite, issueId: string): string {
+  const parts: string[] = []
+  const originLabel: Record<string, string> = { user_explicit: '用户原话', user_confirmed: '用户确认', agent_proposed: 'agent 提议', system_inferred: '系统推断' }
+  const head = view.target.origin ? ' (' + (originLabel[view.target.origin] ?? view.target.origin) + ')' : ''
+  parts.push('<div class="inv-lg-title">谱系 · ' + escapeHtml(view.target.title) + head + '</div>')
+  // Evidence chain: from which utterances.
+  if (view.evidence.length > 0) {
+    parts.push('<div class="inv-lg-group">证据链（来自原始会话）</div>')
+    for (const ev of view.evidence) {
+      const jump = ev.promptMessageId
+        ? '<button class="inv-act inv-jump" data-jump-session="' + escapeHtml(ev.sessionId) + '" data-jump-message="' + escapeHtml(ev.promptMessageId) + '" title="跳回引发这条需求的 prompt">↩</button>'
+        : ''
+      parts.push('<div class="inv-lg-row">会话 ' + escapeHtml(ev.sessionId.slice(0, 18)) + '… seq ' + ev.seqStart + '-' + ev.seqEnd + ' ' + jump + '</div>')
+      for (const m of ev.userMessages) {
+        const mj = m.messageId
+          ? '<button class="inv-act inv-jump" data-jump-session="' + escapeHtml(ev.sessionId) + '" data-jump-message="' + escapeHtml(m.messageId) + '">↩</button>'
+          : ''
+        parts.push('<div class="inv-lg-msg">💬 ' + escapeHtml(m.title.slice(0, 80)) + ' ' + mj + '</div>')
+      }
+    }
+  }
+  // Evolution: supersedes / derives edges.
+  const evoEdges = view.edges.filter((e) => e.kind === 'supersedes' || e.kind === 'derives' || e.kind === 'spawned-by')
+  if (evoEdges.length > 0) {
+    parts.push('<div class="inv-lg-group">演化</div>')
+    for (const e of evoEdges) {
+      const otherId = e.direction === 'out' ? e.toId : e.fromId
+      const n = view.neighbors[otherId]
+      const label = e.kind === 'supersedes' ? (e.direction === 'out' ? '取代了' : '被取代') : e.kind === 'derives' ? (e.direction === 'out' ? '派生出' : '派生自') : '由'
+      parts.push('<div class="inv-lg-row">' + label + ' ' + (n ? escapeHtml(n.title.slice(0, 60)) : escapeHtml(otherId.slice(0, 24))) + '</div>')
+    }
+  }
+  // Execution: sessions + commits.
+  const sessions = view.edges.filter((e) => e.kind === 'executed-in')
+  if (sessions.length > 0) {
+    parts.push('<div class="inv-lg-group">执行会话（' + sessions.length + '）</div>')
+  }
+  if (view.commits.length > 0) {
+    parts.push('<div class="inv-lg-group">代码落地（commit）</div>')
+    for (const c of view.commits) {
+      parts.push('<div class="inv-lg-row">' + escapeHtml(c.sha.slice(0, 10)) + ' · ' + escapeHtml(c.subject.slice(0, 60)) + ' · ' + new Date(c.authorAt).toLocaleDateString() + '</div>')
+    }
+  }
+  if (parts.length === 1) parts.push('<div class="inv-empty">暂无谱系数据</div>')
+  return parts.join('')
+}
+
+
+/** ---- visual project graph (force-directed SVG, no deps) ---- */
+
+interface GVNodeLite { id: string; kind: string; label: string; sessionId?: string; messageId?: string; state?: string }
+interface GVEdgeLite { from: string; to: string; kind: string }
+interface GVDataLite { nodes: GVNodeLite[]; edges: GVEdgeLite[] }
+
+const GV_COLOR: Record<string, string> = { session: '#4c8dff', issue: '#1a7f37', commit: '#8a8f98', decision: '#e8853c' }
+
+/** Simple force layout (repulsion + spring + centering), returns positions. */
+function forceLayout(nodes: GVNodeLite[], edges: GVEdgeLite[], w: number, h: number): Map<string, { x: number; y: number }> {
+  const ns = nodes.map((n) => ({ id: n.id, x: 40 + Math.random() * (w - 80), y: 40 + Math.random() * (h - 80), vx: 0, vy: 0 }))
+  const idx = new Map(ns.map((n, i) => [n.id, i] as const))
+  const adj: Array<[number, number]> = []
+  for (const e of edges) {
+    const a = idx.get(e.from), b = idx.get(e.to)
+    if (a !== undefined && b !== undefined) adj.push([a, b])
+  }
+  for (let iter = 0; iter < 150; iter++) {
+    for (let i = 0; i < ns.length; i++) for (let j = i + 1; j < ns.length; j++) {
+      const dx = ns[i].x - ns[j].x, dy = ns[i].y - ns[j].y
+      const d2 = dx * dx + dy * dy + 1
+      const f = 6000 / d2
+      const d = Math.sqrt(d2)
+      ns[i].vx += (dx / d) * f; ns[i].vy += (dy / d) * f
+      ns[j].vx -= (dx / d) * f; ns[j].vy -= (dy / d) * f
+    }
+    for (const [a, b] of adj) {
+      const dx = ns[b].x - ns[a].x, dy = ns[b].y - ns[a].y
+      const d = Math.sqrt(dx * dx + dy * dy) + 0.01
+      const f = 0.012 * (d - 110)
+      ns[a].vx += (dx / d) * f; ns[a].vy += (dy / d) * f
+      ns[b].vx -= (dx / d) * f; ns[b].vy -= (dy / d) * f
+    }
+    for (const n of ns) {
+      n.vx *= 0.85; n.vy *= 0.85
+      n.x += n.vx; n.y += n.vy
+      n.x = Math.min(w - 14, Math.max(14, n.x)); n.y = Math.min(h - 14, Math.max(14, n.y))
+    }
+  }
+  return new Map(ns.map((n) => [n.id, { x: n.x, y: n.y }] as const))
+}
+
+/** Render the project graph as an interactive SVG (click nodes to jump). */
+function renderGraphSvg(container: HTMLElement, view: GVDataLite): void {
+  const w = container.clientWidth || 900
+  const h = container.clientHeight || 600
+  const pos = forceLayout(view.nodes, view.edges, w, h)
+  const edgeLines = view.edges.map((e) => {
+    const a = pos.get(e.from), b = pos.get(e.to)
+    if (!a || !b) return ''
+    return '<line x1="' + a.x.toFixed(1) + '" y1="' + a.y.toFixed(1) + '" x2="' + b.x.toFixed(1) + '" y2="' + b.y.toFixed(1) + '" class="gv-edge gv-' + e.kind + '"/>'
+  }).join('')
+  const circles = view.nodes.map((n) => {
+    const p = pos.get(n.id)
+    if (!p) return ''
+    const color = GV_COLOR[n.kind] ?? '#999'
+    const clickable = n.kind === 'session' || n.kind === 'issue'
+    const cls = clickable ? 'gv-node gv-click' : 'gv-node'
+    return '<g data-gn="' + escapeHtml(n.id) + '" data-kind="' + n.kind + '">'
+      + '<circle r="9" fill="' + color + '" class="' + cls + '"/><title>' + escapeHtml(n.label) + '</title>'
+      + '<text x="0" y="20" text-anchor="middle" class="gv-label">' + escapeHtml(n.label.slice(0, 18)) + '</text></g>'
+  }).join('')
+  const legend = ['session 会话', 'issue 需求', 'commit 代码', 'decision 决策'].map((t, i) => {
+    const key = ['session', 'issue', 'commit', 'decision'][i]!;
+    return '<span class="gv-legend"><i style="background:' + GV_COLOR[key] + '"></i>' + t + '</span>'
+  }).join('')
+  container.innerHTML = '<svg class="gv-svg" width="100%" height="100%" viewBox="0 0 ' + w + ' ' + h + '">'
+    + '<rect width="100%" height="100%" fill="transparent"/>' + edgeLines + circles + '</svg>'
+    + '<div class="gv-legend-bar">' + legend + '</div>'
+    + '<div class="gv-hint">点击 会话/需求 节点跳转到对话</div>'
+  container.onclick = (ev: MouseEvent): void => {
+    const g = (ev.target as Element).closest<HTMLElement>('[data-gn]')
+    if (g === null) return
+    const id = g.getAttribute('data-gn') ?? ''
+    const node = view.nodes.find((n) => n.id === id)
+    if (!node) return
+    if (node.kind === 'session' && node.sessionId) void jumpToConversation({ sessionId: node.sessionId })
+    else if (node.kind === 'issue' && node.sessionId) void jumpToConversation({ sessionId: node.sessionId, messageId: node.messageId })
+  };
+}
 const CAPTURES_PER_PAGE = 8
 const ISSUES_PER_PAGE = 8
 const PRIORITY_LABEL: Record<number, string> = { 0: 'urgent', 1: 'high', 2: 'medium', 3: 'low', 4: 'none' }
@@ -803,9 +1004,190 @@ function refresh(target?: 'captures' | 'issues'): void {
   void fetchSnapshot().then(render)
 }
 
+// ---- session execution graph (M1) ----
+
+interface GraphNodeLite {
+  id: string
+  kind: string
+  title: string
+  citation: { seqStart: number; seqEnd: number }
+  turn?: number
+  step?: number
+  toolName?: string
+  callId?: string
+  messageId?: string
+  toolError?: boolean
+  parentSessionId?: string
+  origin?: string
+  agentLabel?: string
+}
+interface GraphEdgeLite { id: string; kind: string; fromId: string; toId: string }
+interface GraphDocLite {
+  sessionId: string
+  header: { cwd?: string; parentSession?: string; origin?: string; delegationDepth?: number; createdAt: number }
+  nodes: GraphNodeLite[]
+  edges: GraphEdgeLite[]
+  seqEnd: number
+  builtAt: number
+  version: number
+}
+
+/** Current session id from the sessions service list snapshot. */
+function activeSessionId(): string | undefined {
+  if (clientCtx === null) return undefined
+  try {
+    const sessions = (clientCtx as unknown as { sessions: { list: { getSnapshot(): { current?: string } } } }).sessions
+    return sessions.list.getSnapshot().current
+  } catch { return undefined }
+}
+
+const gSeq = (n: GraphNodeLite): string => (n.citation.seqStart === n.citation.seqEnd
+  ? '#' + n.citation.seqStart
+  : '#' + n.citation.seqStart + '-' + n.citation.seqEnd)
+
+/** One tool/step/user row of the graph tree. */
+function gRow(kind: string, inner: string, extra = '', cls = ''): string {
+  const err = kind === 'tool' && extra === 'err' ? ' inv-gerr' : ''
+  return '<div class="inv-gnode ' + kind + cls + err + '">' + inner + '</div>'
+}
+
+/** Render the stored graph of a session as a nested tree (plain DOM strings). */
+function renderGraphHtml(doc: GraphDocLite, sessionId: string): string {
+  const nodeById = new Map(doc.nodes.map((n) => [n.id, n]))
+  const children = new Map<string, string[]>()
+  const provoked = new Map<string, string>()
+  for (const e of doc.edges) {
+    if (e.kind === 'provoked') { provoked.set(e.fromId, e.toId); continue }
+    const list = children.get(e.fromId) ?? []
+    list.push(e.toId)
+    children.set(e.fromId, list)
+  }
+  const kidsOf = (id: string): string[] => (children.get(id) ?? []).sort((a, b) =>
+    (nodeById.get(a)?.citation.seqStart ?? 0) - (nodeById.get(b)?.citation.seqStart ?? 0) || (a < b ? -1 : 1))
+  const userJump = (n: GraphNodeLite): string => (n.messageId
+    ? '<button class="inv-act inv-jump" data-jump-session="' + escapeHtml(sessionId) + '" data-jump-message="' + escapeHtml(n.messageId) + '" title="跳回这条 prompt">↩</button>'
+    : '')
+  const parts: string[] = []
+  const render = (id: string, depth: number): void => {
+    const n = nodeById.get(id)
+    if (n === undefined) return
+    const pad = '&nbsp;'.repeat(depth * 2)
+    if (n.kind === 'session') {
+      const facts: string[] = []
+      if (doc.header.cwd) facts.push(escapeHtml(doc.header.cwd))
+      if (doc.header.parentSession) facts.push('forked from <button class="inv-act inv-jump inv-gfork" data-jump-session="' + escapeHtml(doc.header.parentSession) + '" title="打开父会话">' + escapeHtml(doc.header.parentSession) + '</button>')
+      if (doc.header.origin === 'subagent') facts.push('subagent (depth ' + (doc.header.delegationDepth ?? 1) + ')')
+      parts.push('<div class="inv-groot">' + escapeHtml(n.title) + ' · ' + escapeHtml(sessionId)
+        + '<button class="inv-act inv-jump" data-jump-session="' + escapeHtml(sessionId) + '" title="跳转到这个会话的对话">↩ 对话</button>'
+        + '<div class="inv-gmeta">' + facts.join(' · ') + ' · ' + doc.nodes.length + ' nodes · ' + doc.edges.length + ' edges · built ' + new Date(doc.builtAt).toLocaleTimeString() + '</div></div>')
+    } else if (n.kind === 'turn') {
+      parts.push('<details class="inv-gturn" open><summary>' + pad + escapeHtml(n.title) + '<span class="inv-gseq">' + gSeq(n) + '</span></summary>')
+    } else if (n.kind === 'step') {
+      parts.push('<details class="inv-gturn"><summary>' + pad + '· step ' + (n.step ?? '') + '<span class="inv-gseq">' + gSeq(n) + '</span></summary>')
+    } else if (n.kind === 'tool') {
+      const call = n.callId ? ' (' + escapeHtml(n.callId.slice(0, 10)) + '…)' : ''
+      parts.push('<div class="inv-gtool' + (n.toolError ? ' inv-gerr' : '') + '">' + pad + '⚙ ' + escapeHtml(n.toolName ?? n.title) + call
+        + (n.toolError ? ' ✗' : ' ✓') + '<span class="inv-gseq">' + gSeq(n) + '</span></div>')
+    } else if (n.kind === 'user-message') {
+      parts.push('<div class="inv-guser">' + pad + '<span class="inv-guser-text">💬 ' + escapeHtml(n.title) + '</span>' + userJump(n) + '<span class="inv-gseq">' + gSeq(n) + '</span></div>')
+    } else if (n.kind === 'assistant') {
+      parts.push(gRow('assistant', pad + '↩ ' + escapeHtml(n.title) + '<span class="inv-gseq">' + gSeq(n) + '</span>'))
+    }
+    if (n.kind === 'session') {
+      for (const kid of kidsOf(id)) {
+        const k = nodeById.get(kid)
+        if (k?.kind === 'user-message' && provoked.has(kid)) continue
+        render(kid, depth + 1)
+      }
+    } else if (n.kind === 'turn' || n.kind === 'step') {
+      for (const kid of kidsOf(id)) render(kid, depth + 1)
+      if (n.kind === 'turn') {
+        for (const [uid, tid] of provoked) if (tid === id) render(uid, depth + 1)
+      }
+      parts.push('</details>')
+    } else {
+      for (const kid of kidsOf(id)) render(kid, depth + 1)
+    }
+  }
+  const root = doc.nodes.find((n) => n.kind === 'session') ?? doc.nodes[0]
+  if (root) render(root.id, 0)
+  return parts.join('')
+}
+
+/** Fetch + render the PROJECT graph (multi-session visual graph) into the tab. */
+async function renderGraph(): Promise<void> {
+  if (panel === null) return
+  const el = document.querySelector<HTMLElement>('#dsh-track-graphview .inv-graph')
+  const title = document.querySelector('.inv-graph-session')
+  if (el === null) return
+  const sessionId = activeSessionId()
+  if (sessionId === undefined || sessionId === '') {
+    el.innerHTML = '<div class="inv-empty">无当前会话 — 打开一个会话后显示项目级会话/需求/代码图谱</div>'
+    if (title !== null) title.textContent = ''
+    return
+  }
+  if (title !== null) title.textContent = '项目图谱'
+  // Resolve the workspace cwd from the current session's stored graph.
+  let cwd = ''
+  try {
+    const d = await fetch('/api/track/graph?sessionId=' + encodeURIComponent(sessionId)).then((r) => r.json())
+    cwd = d.doc?.header?.cwd ?? ''
+  } catch { cwd = '' }
+  let view: GVDataLite = { nodes: [], edges: [] }
+  try {
+    const q = cwd !== '' ? 'cwd=' + encodeURIComponent(cwd) : 'projectId='
+    const r = await fetch('/api/track/graph/view?' + q).then((r) => r.json())
+    view = r.view ?? view
+  } catch { /* keep empty */ }
+  if (view.nodes.length === 0) {
+    el.innerHTML = '<div class="inv-empty">暂无图谱数据 — 点「构建」生成会话图后重试</div>'
+    return
+  }
+  mountGraphForce(el, view as GFData, (n) => {
+    if (n.kind === 'session' && n.sessionId) void jumpToConversation({ sessionId: n.sessionId })
+    else if (n.kind === 'issue' && n.sessionId) void jumpToConversation({ sessionId: n.sessionId, messageId: n.messageId })
+  })
+}
+
+/** Build the current session's graph (POST) then re-render. */
+async function buildCurrentGraph(): Promise<void> {
+  const sessionId = activeSessionId()
+  if (sessionId === undefined || sessionId === '') return
+  try {
+    await fetch('/api/track/graph', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId }),
+    })
+  } catch { /* surface via the re-render */ }
+  await renderGraph()
+}
+
+/** Batch build the workspace of the current session (POST build-all). */
+async function buildAllGraphs(): Promise<void> {
+  const sessionId = activeSessionId()
+  if (sessionId === undefined || sessionId === '') return
+  // Resolve the workspace cwd from the stored graph header when available.
+  let cwd = ''
+  try {
+    const r = await fetch('/api/track/graph?sessionId=' + encodeURIComponent(sessionId)).then((r) => r.json())
+    cwd = r.doc?.header?.cwd ?? ''
+  } catch { cwd = '' }
+  if (cwd === '') return
+  try {
+    await fetch('/api/track/graph/build-all', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ cwd, max_sessions: 200 }),
+    })
+  } catch { /* ignore */ }
+  await renderGraph()
+}
+
 function restoreLayout(): void {
-  trackTab?.remove()
-  trackTab = null
+  graphTab?.remove()
+  graphTab = null
+  document.getElementById('dsh-track-graphview')?.remove()
   if (host === null) return
   host.candidate.classList.remove('inv-host')
   if (host.header !== null) host.header.classList.remove('inv-host-header')
@@ -816,11 +1198,45 @@ function restoreLayout(): void {
   if (prior.gridRows !== undefined) host.candidate.style.gridTemplateRows = prior.gridRows
 }
 
+let graphMode = false
+let graphTab: HTMLButtonElement | null = null
+
+/** Full-width graph view: hide the sidebar body, take the whole conversation
+ *  area (same size as the Chat Trajectory tab). */
+function setGraphMode(open: boolean): void {
+  graphMode = open
+  // The graph swaps the CHAT CONTENT cell (grid-column 1 / grid-row 2 — the
+  // same grid cell where Chat renders, below the tab strip). The header/tab
+  // row stays visible so the user can switch back to Chat/Trajectory.
+  let gv = document.getElementById('dsh-track-graphview')
+  if (open && gv === null && host !== null) {
+    gv = document.createElement('div')
+    gv.id = 'dsh-track-graphview'
+    gv.innerHTML = '<div class="inv-graphview-head">'
+      + '<span class="inv-title">会话结构图 <span class="inv-graph-session"></span></span>'
+      + '<button class="inv-act inv-graph-build" title="构建当前会话的执行树">构建</button>'
+      + '<button class="inv-act inv-graph-buildall" title="批量构建本工作区所有会话的图">全构建</button>'
+      + '</div><div class="inv-graph"></div>'
+    host.candidate.append(gv)
+  }
+  if (host !== null) {
+    // Hide ONLY the chat scroll body (the React-managed messages list); the
+    // header/tab strip and the right sidebar (panel) stay untouched — exactly
+    // how Chat behaves: switching tabs only swaps the middle content cell.
+    if (host.scrollBody !== null) host.scrollBody.style.display = open ? 'none' : ''
+  }
+  // The right sidebar (Track panel) is NEVER hidden by the graph view.
+  if (gv !== null) gv.hidden = !open
+  if (graphTab !== null) graphTab.setAttribute('aria-selected', String(open))
+  if (open) { void renderGraph() }
+}
+
 function setPanelOpen(open: boolean): void {
   panelOpen = open
   if (panel !== null) panel.hidden = !open
   if (fab !== null) fab.hidden = open
-  if (trackTab !== null) trackTab.setAttribute('aria-selected', String(!open))
+  if (!open) setGraphMode(false)
+  if (graphTab !== null) graphTab.setAttribute('aria-selected', String(open && graphMode))
   try { localStorage.setItem(OPEN_KEY, open ? '1' : '0') } catch { /* ignore */ }
   if (open) syncGrid()
   else if (host !== null) restoreLayout()
@@ -893,17 +1309,30 @@ function mountTab(): void {
   const reference = tl.querySelector<HTMLButtonElement>(':scope > button[role="tab"][aria-selected="false"]')
     ?? tl.querySelector<HTMLButtonElement>(':scope > button[role="tab"]')
   if (reference === null) return
-  const tab = document.createElement('button')
-  tab.type = 'button'
-  tab.role = 'tab'
-  tab.className = `${reference.className} inv-tab`
-  const label = document.createElement('span')
-  label.textContent = 'Track'
-  tab.append(label)
-  tab.setAttribute('aria-selected', String(!panelOpen))
-  tab.addEventListener('click', () => { setPanelOpen(!panelOpen) })
-  tl.append(tab)
-  trackTab = tab
+  const makeTab = (text: string): HTMLButtonElement => {
+    const t = document.createElement('button')
+    t.type = 'button'
+    t.role = 'tab'
+    t.className = reference.className + ' inv-tab'
+    const l = document.createElement('span')
+    l.textContent = text
+    t.append(l)
+    tl.append(t)
+    return t
+  }
+  // The sidebar stays reachable via the FAB (◆); the tab strip only hosts
+  // the 会话结构图 view switch — clicking a NATIVE tab (Chat/Trajectory)
+  // exits the graph view back to the conversation.
+  const gtab = makeTab('会话结构图')
+  gtab.setAttribute('aria-selected', String(false))
+  gtab.addEventListener('click', () => { setGraphMode(true) })
+  graphTab = gtab
+  // Delegated: any native (non-inv) tab click exits the graph view.
+  tl.addEventListener('click', (ev) => {
+    const t = (ev.target as HTMLElement).closest<HTMLElement>('button[role="tab"]')
+    if (t === null || t.classList.contains('inv-tab')) return
+    if (graphMode) setGraphMode(false)
+  }, true)
 }
 
 /**
@@ -1257,6 +1686,32 @@ export function mountRightPanel(ctx: ClientContext): () => void {
       }
       return
     }
+    // Graph actions: build current session / batch build the workspace.
+    const graphBuild = target.closest<HTMLElement>('.inv-graph-build')
+    if (graphBuild !== null) { void buildCurrentGraph(); return }
+    const graphBuildAll = target.closest<HTMLElement>('.inv-graph-buildall')
+    if (graphBuildAll !== null) { void buildAllGraphs(); return }
+    // Lineage view: lazy-load the Why/lineage lens for an issue.
+    const lineageBtn = target.closest<HTMLElement>('[data-lineage]')
+    if (lineageBtn !== null) {
+      const id = lineageBtn.getAttribute('data-lineage')
+      if (id) {
+        const box = panel?.querySelector<HTMLElement>('[data-lineage-box="' + id + '"]')
+        if (box !== null) {
+          if (!box.hidden) { box.hidden = true; return }
+          box.hidden = false
+          box.innerHTML = '<div class="inv-empty">加载中…</div>'
+          void fetch('/api/track/lineage?entity=' + encodeURIComponent(id))
+            .then((r) => r.json())
+            .then((d) => {
+              if (d.view) box.innerHTML = renderLineageHtml(d.view, id)
+              else box.innerHTML = '<div class="inv-empty">暂无谱系数据</div>'
+            })
+            .catch(() => { box.innerHTML = '<div class="inv-empty">加载失败</div>' })
+        }
+      }
+      return
+    }
     // Cancel: any cancel button clears all confirm states (delete, card
     // done/canceled, batch).
     if (target.closest('[data-capture-cancel], [data-issue-cancel]') !== null) {
@@ -1321,6 +1776,7 @@ export function mountRightPanel(ctx: ClientContext): () => void {
   observer.observe(document.body, { childList: true, subtree: true })
   tryMount()
   refresh()
+  void renderGraph()
   // Late-render retries: the session tab strip (and sometimes the whole
   // conversation root) renders after the first attach; re-run the mount so
   // the Track tab appears once the strip exists. (MutationObserver only
@@ -1334,12 +1790,19 @@ export function mountRightPanel(ctx: ClientContext): () => void {
   // re-injected within one tick.
   const autoRefresh = window.setInterval(() => {
     tryMount()
-    if (panelOpen && !document.hidden) refresh()
+    if (panelOpen && !document.hidden) { refresh(); void renderGraph() }
   }, 20000)
-  const onFocus = (): void => { tryMount(); refresh() }
+  const onFocus = (): void => { tryMount(); refresh(); void renderGraph() }
+  // Re-render the graph when the active session changes.
+  let unsubSessions: (() => void) | undefined
+  try {
+    const sessions = (clientCtx as unknown as { sessions: { list: { subscribe(fn: () => void): () => void } } }).sessions
+    unsubSessions = sessions.list.subscribe(() => { if (panelOpen) void renderGraph() })
+  } catch { unsubSessions = undefined }
   window.addEventListener('focus', onFocus)
 
   return () => {
+    if (unsubSessions !== undefined) unsubSessions()
     observer.disconnect()
     mountRetries.forEach((id) => window.clearTimeout(id))
     window.clearInterval(autoRefresh)

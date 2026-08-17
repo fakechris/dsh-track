@@ -26,6 +26,10 @@ import {
   type Link,
   type LlmUsageRecord,
   type EvidenceRef,
+  type SessionGraph,
+  type Project,
+  type CommitArtifact,
+  type ExtractionRun,
 } from './types.ts'
 import { MAX_EVIDENCE, isAutoCommit, nextInferred, sweepProposal } from './lifecycle/state-machine.ts'
 
@@ -770,6 +774,99 @@ export class TrackStore {
   await this.ready()
     const links = await this.listLinks()
     return links.filter((l) => l.fromId === id || l.toId === id)
+  }
+  // ---- session execution graphs (M1 genealogy floor) ----
+
+  /** Persist (or replace) the execution graph of one session. Idempotent:
+   *  the deterministic builder produces the same nodes/edges for the same log. */
+  async upsertGraph(graph: SessionGraph): Promise<void> {
+  await this.ready()
+    await this.chain('graph', () => this.unit.putRecord('graph', graph.sessionId, graph))
+  }
+
+  async getGraph(sessionId: string): Promise<SessionGraph | undefined> {
+  await this.ready()
+    const { tables } = await this.unit.loadAll()
+    return (tables.graph ?? {})[sessionId] as SessionGraph | undefined
+  }
+
+  /** All stored session graphs (for status / build-all reporting). */
+  async listGraphs(): Promise<SessionGraph[]> {
+  await this.ready()
+    const { tables } = await this.unit.loadAll()
+    return Object.values(tables.graph ?? {}) as SessionGraph[]
+  }
+
+  /** Persist the per-session graph-built marker (observability only). */
+  async markGraphBuilt(sessionId: string, at = new Date().toISOString()): Promise<void> {
+  await this.ready()
+    const g = (await this.readGlobal()) ?? {
+      version: 1 as const,
+      teams: {},
+      identifierCounter: 0,
+    }
+    await this.writeGlobal({
+      ...g,
+      graphBuiltSessions: {
+        ...(g.graphBuiltSessions ?? {}),
+        [sessionId]: at,
+      },
+    })
+  }
+
+  // ---- projects (genealogy Layer 1 grouping) ----
+
+  /** Persist (or replace) a project. Idempotent: project ids are cwd hashes. */
+  async upsertProject(project: Project): Promise<void> {
+  await this.ready()
+    await this.chain('projects', () => this.unit.putRecord('projects', project.id, project))
+  }
+
+  async getProject(id: string): Promise<Project | undefined> {
+  await this.ready()
+    const { tables } = await this.unit.loadAll()
+    return (tables.projects ?? {})[id] as Project | undefined
+  }
+
+  async listProjects(): Promise<Project[]> {
+  await this.ready()
+    const { tables } = await this.unit.loadAll()
+    return Object.values(tables.projects ?? {}) as Project[]
+  }
+
+  // ---- git commit artifacts (M3 — Layer 0 code anchor) ----
+
+  /** Persist (or replace) a commit artifact. Idempotent: ids are sha hashes. */
+  async upsertCommit(commit: CommitArtifact): Promise<void> {
+  await this.ready()
+    await this.chain('commits', () => this.unit.putRecord('commits', commit.id, commit))
+  }
+
+  async getCommit(id: string): Promise<CommitArtifact | undefined> {
+  await this.ready()
+    const { tables } = await this.unit.loadAll()
+    return (tables.commits ?? {})[id] as CommitArtifact | undefined
+  }
+
+  async listCommits(projectId?: string): Promise<CommitArtifact[]> {
+  await this.ready()
+    const { tables } = await this.unit.loadAll()
+    const commits = Object.values(tables.commits ?? {}) as CommitArtifact[]
+    return projectId ? commits.filter((c) => c.projectId === projectId) : commits
+  }
+
+  // ---- extraction runs (ledger-first: durable intermediate knowledge) ----
+
+  /** Persist one extraction run. Idempotent: deterministic run ids. */
+  async upsertExtraction(run: ExtractionRun): Promise<void> {
+  await this.ready()
+    await this.chain('extractions', () => this.unit.putRecord('extractions', run.id, run))
+  }
+
+  async listExtractions(limit = 20): Promise<ExtractionRun[]> {
+  await this.ready()
+    const { tables } = await this.unit.loadAll()
+    return (Object.values(tables.extractions ?? {}) as ExtractionRun[]).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limit)
   }
 
   // ---- audit (observability) ----

@@ -70,13 +70,4 @@ export declare function synthesizeCandidate(ctx: Context, opts: {
      */
     motivationContext?: string;
 }): Promise<TaskCandidate | undefined>;
-/**
- * Project a TaskCandidate to the v1 IssueCandidate shape (v2-design §2 stage ⑦).
- *
- * The projection is lossy by design: it flattens the v2 candidate (kind,
- * goal, deliverable, AC list) into the store's Linear-compatible Issue shape.
- * `suggestedState` derives from kind: non_task candidates should never reach
- * the store, and bug/implementation candidates lean in_progress while pure
- * investigations stay todo unless tool evidence exists.
- */
 export declare function projectToIssueCandidate(c: TaskCandidate, teamKey?: string): IssueCandidate;

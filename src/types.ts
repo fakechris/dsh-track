@@ -40,6 +40,19 @@ export interface Capture {
   promotedToIssueId?: string
 }
 
+/**
+ * Evidence pointer from a semantic node back to the raw session log
+ * (Layer 0 — the immutable fact layer). kind='span' cites the evidence
+ * span that produced the node; kind='prompt' cites the originating user
+ * request message.
+ */
+export interface IssueCitation {
+  sessionId: string
+  seqStart: number
+  seqEnd: number
+  kind: 'span' | 'prompt'
+}
+
 /** Issue state (Linear-compatible subset). */
 export type IssueState = 'todo' | 'in_progress' | 'done' | 'canceled'
 
@@ -72,6 +85,34 @@ export interface Issue {
   acceptanceCriteria?: string
   /** Sessions that executed this issue (one issue, many sessions). */
   linkedSessionIds: string[]
+  /**
+   * Semantic node kind (genealogy Layer 1): requirement (a work thread that
+   * grew from user intent), problem (a defect/pain discovered while doing
+   * something else — the '做 A 时发现 B' node), decision, task (mechanical
+   * execution), investigation. Populated by the sync v2 pipeline from the
+   * candidate kind; absent on legacy issues.
+   */
+  semanticKind?: 'requirement' | 'problem' | 'decision' | 'task' | 'investigation'
+  /**
+   * Source authority (invariant #3): where the requirement's content came from.
+   * user_explicit — verbatim user intent; user_confirmed — user accepted a
+   * proposal; agent_proposed — the model suggested it (only proposed, never
+   * treated as confirmed); system_inferred — deterministic rules.
+   */
+  origin?: 'user_explicit' | 'user_confirmed' | 'agent_proposed' | 'system_inferred'
+  /**
+   * Evidence pointers back to Layer 0 (the raw session log): every semantic
+   * edge/claim must cite its source (sessionId, seqRange) so the graph stays
+   * explainable. The first citation is also stored as sourceSpan.
+   */
+  citations?: IssueCitation[]
+  /** The originating evidence span (first citation, shorthand). */
+  sourceSpan?: IssueCitation
+  /** Inducted project id (see track_project_* — group of sessions by cwd). */
+  projectId?: string
+  /** Issue this one supersedes (evolution edge — supersedes keeps both nodes,
+   *  the older stays visible with state canceled/archived). */
+  supersedesIssueId?: string
   /**
    * Message id of the user prompt that originated this issue (best-effort).
    * Set by `track_create_issue` (the current session's latest explicit user
@@ -164,12 +205,125 @@ export interface Epic {
 /** Relation edge in the capture↔issue↔session↔epic graph. */
 export interface Link {
   id: string
-  fromType: 'capture' | 'issue' | 'session' | 'epic'
+  fromType: 'capture' | 'issue' | 'session' | 'epic' | 'decision' | 'commit' | 'project'
   fromId: string
-  toType: 'capture' | 'issue' | 'session' | 'epic'
+  toType: 'capture' | 'issue' | 'session' | 'epic' | 'decision' | 'commit' | 'project'
   toId: string
-  kind: 'relates' | 'blocks' | 'derives' | 'belongs'
+  kind: 'relates' | 'blocks' | 'derives' | 'belongs' | 'spawned-by' | 'supersedes' | 'executed-in' | 'raised-in' | 'forked-from' | 'landed-in' | 'implements'
   createdAt: string
+  /**
+   * Bi-temporal light: when the relation became true in the world (event
+   * time — e.g. the session start for executed-in, the commit author date
+   * for landed-in). Absent on legacy links.
+   */
+  eventTime?: number
+  /** When track ingested this relation (ingestion time, ISO). Defaults to createdAt. */
+  ingestedAt?: string
+  /** How this edge was derived: deterministic | identity | commit-window | title-overlap | user. */
+  linkMethod?: string
+}
+
+/**
+ * M1 event-graph — the deterministic execution tree of one session.
+ *
+ * Nodes cover the conversation's structural facts (turns / steps / tool calls /
+ * user requests / assistant replies); edges express containment (session→turn→
+ * step→tool) and provenance (user message → the turn it provoked). Every node
+ * and edge carries a GraphCitation (sessionId + seq range) that points back
+ * into the raw session.jsonl — the source-of-truth chain for the genealogy
+ * vision (docs/genealogy-vision.md).
+ * @module @fakechris/dsh-track/types
+ */
+
+/** Node kinds in the per-session execution graph. */
+export type GraphNodeKind =
+  | 'session'       // the session root (header facts)
+  | 'turn'          // turn/start
+  | 'step'          // step/start
+  | 'tool'          // tool/call (+ paired tool/result)
+  | 'user-message'  // user/message (a user request)
+  | 'assistant'     // assistant/message (a model reply)
+
+/** Edge kinds in the per-session execution graph. */
+export type GraphEdgeKind =
+  | 'contains'   // session→turn, turn→step, turn→assistant, session→user-message
+  | 'invokes'    // step→tool (or turn→tool when the log has no step)
+  | 'provoked'   // user-message→turn: this request opened this turn's work
+
+/** Exact log range a node/edge cites (inclusive). */
+export interface GraphCitation {
+  /** Session owning the cited log range. */
+  sessionId: string
+  /** First event seq of the source range (inclusive). */
+  seqStart: number
+  /** Last event seq of the source range (inclusive). */
+  seqEnd: number
+}
+
+/** One node of the per-session execution graph. */
+export interface GraphNode {
+  /** Deterministic id (gn_<hash>) — stable across rebuilds of the same log. */
+  id: string
+  kind: GraphNodeKind
+  /** Short display title (truncated text / turn label / tool name). */
+  title: string
+  /** Exact raw-log range this node covers. */
+  citation: GraphCitation
+  /** Turn number this node belongs to, when derivable. */
+  turn?: number
+  /** Step number within the turn, when derivable. */
+  step?: number
+  /** Tool name for kind === 'tool'. */
+  toolName?: string
+  /** Tool call id — pairs tool/call with tool/result. */
+  callId?: string
+  /** user/message data.id — the web panel's jump-back target. */
+  messageId?: string
+  /** Whether the paired tool/result carried an error-ish payload. */
+  toolError?: boolean
+  /** Header facts on the session root node only. */
+  parentSessionId?: string
+  origin?: 'subagent'
+  agentLabel?: string
+  /** Epoch ms when the node's first event occurred. */
+  createdAt: number
+}
+
+/** One edge of the per-session execution graph. */
+export interface GraphEdge {
+  /** Deterministic id (ge_<hash>). */
+  id: string
+  kind: GraphEdgeKind
+  fromId: string
+  toId: string
+  /** Exact raw-log range this edge cites. */
+  citation: GraphCitation
+}
+
+/** The complete per-session execution graph — stored under key = sessionId. */
+export interface SessionGraph {
+  /** Session id — also the KV record key. */
+  sessionId: string
+  /** Header facts (id/cwd/parentSession/origin/delegationDepth/createdAt). */
+  header: {
+    id: string
+    cwd?: string
+    parentSession?: string
+    origin?: 'subagent'
+    delegationDepth?: number
+    agentPreset?: string
+    createdAt: number
+  }
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+  /** Highest event seq folded into the graph. */
+  seqEnd: number
+  /** Epoch ms of the last event folded into the graph (activity window end). */
+  lastActivityAt: number
+  /** Epoch ms when this graph was built. */
+  builtAt: number
+  /** Builder schema version (bump on breaking shape changes). */
+  version: number
 }
 
 /** Decision point: AI-raised, user-answered, persisted to the KV decisions table. */
@@ -207,8 +361,12 @@ export interface Decision {
   /** Message id of that motivation request (`user/message` `data.id`) —
    *  the panel's deep link target when jumping back to the conversation. */
   contextMessageId?: string
+  /** Evidence pointer to the raise turn in the raw log (best-effort). */
+  citation?: { sessionId: string; seqStart: number; seqEnd: number }
   /** Id of a previous decision of the same topic that this one supersedes. */
   supersedesDecisionId?: string
+  /** QOC evaluation criteria — the yardsticks used to pick the option (cost, complexity, privacy...). */
+  criteria?: string[]
   createdAt: string
 }
 
@@ -237,6 +395,10 @@ export interface TrackGlobal {
    * web process and caused re-captures after every restart).
    */
   autoRequirementSessions?: Record<string, string>
+  /** Durable per-session event-graph build marker: sessionId → ISO build time.
+   *  Progress/observability only — freshness is judged by the stored graph's
+   *  seqEnd vs the log length, so a stale marker never blocks a rebuild. */
+  graphBuiltSessions?: Record<string, string>
   /** Runtime-tunable auto-maintenance knobs (defaults when absent). */
   config?: TrackConfig
 }
@@ -280,7 +442,7 @@ export const DEFAULT_TRACK_CONFIG: TrackConfig = {
 export interface AuditEntry {
   id: string
   /** The tool that ran: capture_thought | report_decision_point | track_create_issue | track_sync_history | track_usage | track_backfill_captures | track_respond_decision | track_list_decisions | track_attach_issue | track_update_issue_state | track_issue_evidence. */
-  tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history' | 'track_usage' | 'track_backfill_captures' | 'track_respond_decision' | 'track_list_decisions' | 'track_attach_issue' | 'track_update_issue_state' | 'track_issue_evidence'
+  tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history' | 'track_usage' | 'track_backfill_captures' | 'track_respond_decision' | 'track_list_decisions' | 'track_attach_issue' | 'track_update_issue_state' | 'track_issue_evidence' | 'track_session_graph' | 'track_genealogy' | 'track_git_artifacts' | 'track_evolution_brief'
   /** Epoch ms of the invocation. */
   ts: number
   /** Owning agent session id when available. */
@@ -329,11 +491,83 @@ export interface LlmUsageRecord {
   reasoningTokens?: number
 }
 
+/**
+ * A Project (genealogy Layer 1 grouping): sessions whose cwd belongs to one
+ * workspace/repository. Inducted deterministically from graph headers
+ * (header.cwd) + the repo's git remote — the '归纳到几个项目' dimension.
+ */
+export interface Project {
+  /** Stable id: track_project_<hash(cwd)> — deterministic across re-runs. */
+  id: string
+  /** Project display name (basename of the cwd). */
+  name: string
+  /** Absolute workspace path (also the identity key). */
+  path: string
+  /** Git remote origin URL, when readable from <path>/.git/config. */
+  repoUrl?: string
+  /** Sessions inducted into this project (graph docs with this cwd). */
+  sessionIds: string[]
+  createdAt: string
+  updatedAt: string
+}
+
+/**
+ * A git commit artifact (genealogy Layer 1 Artifact node / Layer 0 code
+ * anchor). Scanned from a project's git log and linked to sessions (by
+ * activity time window) and issues (by title token overlap).
+ */
+export interface CommitArtifact {
+  /** Stable id: track_commit_<hash(sha)> — deterministic across scans. */
+  id: string
+  /** Git commit sha (full 40-hex). */
+  sha: string
+  /** Project id the commit belongs to (projectIdFor(cwd)). */
+  projectId: string
+  /** Repo cwd the commit was scanned from. */
+  repo: string
+  /** Author date, epoch ms. */
+  authorAt: number
+  /** Commit subject line (first line of the message). */
+  subject: string
+  createdAt: string
+}
+
+/**
+ * One extraction run — the durable record of what the sync pipeline inferred
+ * (Ledger-first: candidates are knowledge, not throwaway intermediates).
+ * Keeps a compact projection of the candidates so a re-run never loses the
+ * richer intermediate view that got flattened into Issues.
+ */
+export interface ExtractionRun {
+  /** Deterministic id: track_extract_<hash(workspace, at)>. */
+  id: string
+  /** Workspace cwd the run scanned. */
+  workspace: string
+  /** Sync engine ('v1' | 'v2'). */
+  engine: 'v1' | 'v2'
+  /** Model route used for LLM synthesis, when any. */
+  model?: string
+  scannedSessions: number
+  spanCount: number
+  /** Compact candidate projection: id, span, kind, authority, title, confidence. */
+  candidates: Array<{
+    id: string
+    sessionId: string
+    seqStart: number
+    seqEnd: number
+    kind: string
+    authority: string
+    title: string
+    confidence: number
+  }>
+  createdAt: string
+}
+
 /** KV unit descriptor for the track unit. */
 export const TRACK_UNIT = {
   name: 'track',
   version: 1,
-  tables: ['captures', 'issues', 'epics', 'links', 'decisions', 'audit', 'usage'],
+  tables: ['captures', 'issues', 'epics', 'links', 'decisions', 'audit', 'usage', 'graph', 'projects', 'commits', 'extractions'],
   hasGlobal: true,
 } as const
 
