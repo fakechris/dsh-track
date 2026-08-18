@@ -6,7 +6,7 @@
  * @module @fakechris/dsh-track/client/calendar-yarn
  */
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 const T = {
@@ -57,126 +57,245 @@ const dayLabelOf = (base: number, day: number): string => {
 
 const DAY_W = 60, LANE_H = 86, TOPH = 30;
 
-/** Yarn: x = days, lanes = projects; nodes = REQUIREMENTS; threads = sessions. */
+/** Yarn: x = days, lanes = projects (by event volume); nodes = REQUIREMENTS;
+ *  threads = sessions (bezier, gold diamond on lane switch). Layout follows the
+ *  track-calendar-fixed reference: lanes sorted by events, zero-activity repos
+ *  folded into '其他 ×N', greedy spiral packing per cell, self-adaptive sizing.
+ */
 function YarnView(props: {
   data: CalData; selId: string | null; setSelId: (id: string | null) => void;
   hover: string | null; setHover: (h: string | null) => void; onJump: (j: CalJump) => void;
 }) {
   const { data, selId, setSelId, hover, setHover, onJump } = props;
   const base = Date.parse(data.dayBase);
-  const lanes = [...data.projects, { id: 'unk', name: '未归属', hue: UNK_HUE }];
-  const laneY = (pid: string): number => {
-    const k = lanes.findIndex((l) => l.id === pid);
-    return TOPH + (k === -1 ? lanes.length - 1 : k) * LANE_H + LANE_H / 2;
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [, setSize] = useState(0);
+  const [tangledOnly, setTangledOnly] = useState(false);
+  // ---- lanes: by event volume desc, zero-activity folded, unk last ----
+  const lanes = useMemo(() => {
+    const evByProj: Record<string, number> = {};
+    for (const r of data.requirements) evByProj[r.proj] = (evByProj[r.proj] ?? 0) + (r.events || 0);
+    const actives = data.projects.filter((p) => evByProj[p.id]).sort((a, b) => evByProj[b.id]! - evByProj[a.id]!);
+    const rest = data.projects.filter((p) => !evByProj[p.id]);
+    const lanesOut: Array<{ id: string; name: string; hue: string; ev?: number }> = [
+      ...actives.map((p) => ({ id: p.id, name: p.name, hue: p.hue, ev: evByProj[p.id] })),
+      ...(rest.length > 0 ? [{ id: '__other', name: '其他仓库 ×' + rest.length, hue: '#3A4656', ev: 0 }] : []),
+      ...(evByProj.unk !== undefined ? [{ id: 'unk', name: '未归属', hue: UNK_HUE, ev: evByProj.unk }] : []),
+    ];
+    return lanesOut;
+  }, [data]);
+  const laneIdx = useMemo(() => { const m: Record<string, number> = {}; lanes.forEach((l, i) => { m[l.id] = i }); return m }, [lanes]);
+  const laneOf = (pid: string): string => (laneIdx[pid] !== undefined ? pid : '__other');
+  const hueOf = (pid: string): string => (pid === 'unk' ? UNK_HUE : (data.projects.find((p) => p.id === pid)?.hue ?? (pid === '__other' ? '#3A4656' : '#999')));
+  // ---- requirement lookup by (sessionId, day, req) for segments -> req mapping ----
+  const reqByKey = useMemo(() => {
+    const m = new Map<string, CalRequirement>();
+    for (const r of data.requirements) m.set(r.sessionId + '|' + r.day + '|' + r.req, r);
+    return m;
+  }, [data]);
+  // ---- session order: segments are time-ordered -> the requirement sequence ----
+  const sessOrder = useMemo(() => {
+    const m = new Map<string, CalRequirement[]>();
+    for (const s of data.sessions) {
+      const seen = new Set<string>();
+      const list: CalRequirement[] = [];
+      for (const g of s.segments ?? []) {
+        const r = reqByKey.get(s.id + '|' + g.day + '|' + g.req);
+        if (r !== undefined && !seen.has(r.id)) { seen.add(r.id); list.push(r); }
+      }
+      if (list.length > 0) m.set(s.id, list);
+    }
+    return m;
+  }, [data, reqByKey]);
+  const sessById = useMemo(() => new Map(data.sessions.map((s) => [s.id, s])), [data]);
+  // ---- greedy spiral packing: zero-overlap within a (day, lane) cell ----
+  const pack = (items: Array<{ r: number; req: CalRequirement; px?: number; py?: number }>, halfW: number, halfH: number): void => {
+    const placed: Array<{ px: number; py: number; r: number }> = [];
+    for (const it of items) {
+      let ok = false;
+      for (let t = 0; t < 500 && !ok; t++) {
+        const ang = t * 2.399963, rad = t === 0 ? 0 : 2.2 * Math.sqrt(t) + 2;
+        let px = Math.cos(ang) * rad, py = Math.sin(ang) * rad;
+        px = Math.max(-halfW + it.r + 2, Math.min(halfW - it.r - 2, px));
+        py = Math.max(-halfH + it.r + 2, Math.min(halfH - it.r - 2, py));
+        if (!placed.some((q) => { const dx = q.px - px, dy = q.py - py; return dx * dx + dy * dy < (q.r + it.r + 1.6) ** 2; })) {
+          it.px = px; it.py = py; placed.push({ px, py, r: it.r }); ok = true;
+        }
+      }
+      if (!ok) { it.px = 0; it.py = 0; placed.push({ px: 0, py: 0, r: it.r }); }
+    }
   };
-  const hueOf = (pid: string): string => (pid === 'unk' ? UNK_HUE : (data.projects.find((p) => p.id === pid)?.hue ?? '#999'));
-  // Group requirements by (day, proj) to dodge overlaps.
-  // Cluster layout: same (day, proj) requirements fan out HORIZONTALLY around
-  // the day's center (largest first, at the middle) with a small vertical tier
-  // so a busy day reads as a fan, not a vertical stack. xOffset applied in px();
-  // yOffset is the small tier (±step by rank).
-  const cluster = useMemo(() => {
-    const byKey = new Map<string, CalRequirement[]>();
-    for (const r of data.requirements) {
-      const key = r.day + '|' + r.proj;
-      const list = byKey.get(key) ?? [];
-      list.push(r);
-      byKey.set(key, list);
-    }
-    const xo: Record<string, number> = {};
-    const yo: Record<string, number> = {};
-    for (const list of byKey.values()) {
-      const sorted = [...list].sort((a, b) => b.events - a.events);
-      const n = sorted.length;
-      sorted.forEach((r, k) => {
-        // center-out horizontal: ranks 0,1,2... map to 0,-1,+1,-2,+2...
-        const side = k % 2 === 0 ? 1 : -1;
-        const pos = Math.ceil(k / 2);
-        const gap = Math.max(5, Math.min(10, 30 / Math.max(1, n)));
-        xo[r.id] = side * pos * gap;
-        yo[r.id] = (k - (n - 1) / 2) * 9;
-      });
-    }
-    return { xo, yo };
-  }, [data]);
-  const W = data.days * DAY_W + 20;
-  const H = TOPH + lanes.length * LANE_H + 16;
+  // ---- adaptive sizing: fill the viewport ----
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (el === null) return;
+    const ro = new ResizeObserver(() => setSize(el.clientWidth));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const availW = wrapRef.current?.clientWidth ?? 800;
+  const availH = wrapRef.current?.clientHeight ?? 500;
+  const TOP = 26;
+  const dayW = Math.max(96, Math.floor((availW - 8) / Math.max(1, data.days)));
+  const laneH = Math.max(96, Math.floor((availH - TOP - 8) / Math.max(1, lanes.length)));
+  const W = data.days * dayW + 8;
+  const H = TOP + lanes.length * laneH + 6;
+  const laneY = (i: number): number => TOP + i * laneH + laneH / 2;
   const focus = hover ?? (selId ? selId : null);
-  // Session threads: requirements of one session in day order.
-  const threads = useMemo(() => {
-    const bySession = new Map<string, CalRequirement[]>();
-    for (const r of data.requirements) {
-      const list = bySession.get(r.sessionId) ?? [];
-      list.push(r);
-      bySession.set(r.sessionId, list);
+  // data.requirements/sessions are ALREADY filtered by origin+project in the parent.
+  const reqs = data.requirements;
+  // ---- threads: same session >= 2 visible reqs (segments time order) ----
+  const threads = [...sessOrder.entries()]
+    .map(([sid, list]) => ({ sid, list: list.filter((r) => reqs.includes(r)) }))
+    .filter((t) => t.list.length >= 2);
+  const tangledThreads = threads.filter((t) => new Set(t.list.map((r) => laneOf(r.proj))).size > 1);
+  const visibleThreads = tangledOnly ? tangledThreads : threads;
+  const visibleReqs = tangledOnly
+    ? reqs.filter((r) => new Set(tangledThreads.flatMap((t) => t.list.map((x) => x.id))).has(r.id))
+    : reqs;
+  // ---- pack each (day, lane) cell ----
+  const cells = new Map<string, Array<{ r: number; req: CalRequirement; px?: number; py?: number }>>();
+  for (const r of visibleReqs) {
+    const k = r.day + '|' + laneOf(r.proj);
+    const list = cells.get(k) ?? [];
+    list.push({ r: 3 + Math.log2((r.events || 1) + 1) * 1.15, req: r });
+    cells.set(k, list);
+  }
+  const pos = new Map<string, { x: number; y: number; r: number }>();
+  for (const [k, items] of cells) {
+    const [d, lid] = k.split('|');
+    const dd = Number(d), li = laneIdx[lid] ?? 0;
+    items.sort((a, b) => b.r - a.r);
+    pack(items, dayW / 2, laneH / 2);
+    for (const it of items) {
+      pos.set(it.req.id, { x: dd * dayW + dayW / 2 + (it.px ?? 0), y: laneY(li) + (it.py ?? 0), r: it.r });
     }
-    for (const list of bySession.values()) list.sort((a, b) => a.day - b.day || a.events - b.events);
-    return bySession;
-  }, [data]);
-  const reqMap = useMemo(() => new Map(data.requirements.map((r) => [r.id, r])), [data]);
-  const px = (r: CalRequirement): number => r.day * DAY_W + DAY_W / 2 + (cluster.xo[r.id] ?? 0) + ((r.sessionId.length * 7) % 7) - 3;
-  const py = (r: CalRequirement): number => laneY(r.proj) + (cluster.yo[r.id] ?? 0);
+  }
+  // ---- link lookup for special edges ----
+  const linkColor: Record<string, [string, string?]> = { 'forked-from': ['#9C82E0', undefined], derives: [GOLD, '4 4'], 'executed-in': ['#3FA79B', '3 4'] };
+  const laneName = (pid: string): string => { const l = lanes.find((x) => x.id === laneOf(pid)); return l ? l.name : pid; };
+  // ---- render ----
+  let switchCount = 0;
+  const gLinks: React.ReactNode[] = [];
+  for (const l of data.links ?? []) {
+    const ra = data.requirements.find((x) => x.id === l.from);
+    const rb = l.toSession !== undefined
+      ? data.requirements.find((x) => x.id === l.to && x.sessionId === l.toSession)
+      : data.requirements.find((x) => x.id === l.to);
+    const a = ra ? pos.get(ra.id) : undefined;
+    const b = rb ? pos.get(rb.id) : undefined;
+    if (!a || !b || !ra || !rb) continue;
+    const [c, da] = linkColor[l.kind] ?? ['#556', undefined];
+    const mx = (a.x + b.x) / 2;
+    const dim = focus !== null && focus !== ra.sessionId && focus !== rb.sessionId;
+    gLinks.push(
+      <path key={'l' + l.from + l.to + l.kind} d={'M ' + a.x + ' ' + a.y + ' C ' + mx + ' ' + a.y + ', ' + mx + ' ' + b.y + ', ' + b.x + ' ' + b.y}
+        fill='none' stroke={c} strokeOpacity={dim ? 0.12 : 0.55} strokeWidth={1.2}
+        strokeDasharray={da} opacity={1} />,
+    );
+  }
+  // ---- session threads (bezier + gold diamond on lane switch) ----
+  const gThreads: React.ReactNode[] = [];
+  for (const t of visibleThreads) {
+    const dimmed = focus !== null && focus !== t.sid;
+    const g: React.ReactNode[] = [];
+    for (let i = 1; i < t.list.length; i++) {
+      const a = pos.get(t.list[i - 1]!.id), b = pos.get(t.list[i]!.id);
+      if (!a || !b) continue;
+      const mx = (a.x + b.x) / 2;
+      g.push(
+        <path key={'s' + i} d={'M ' + a.x + ' ' + a.y + ' C ' + mx + ' ' + a.y + ', ' + mx + ' ' + b.y + ', ' + b.x + ' ' + b.y}
+          fill='none' stroke='#B9C4D2' strokeOpacity={dimmed ? 0.1 : 0.34} strokeWidth={1.3} />,
+      );
+      if (laneOf(t.list[i - 1]!.proj) !== laneOf(t.list[i]!.proj)) {
+        switchCount++;
+        const sx = (a.x + b.x) / 2, sy = (a.y + b.y) / 2;
+        g.push(
+          <path key={'sw' + i} d={'M ' + sx + ' ' + (sy - 3.4) + ' L ' + (sx + 3.4) + ' ' + sy + ' L ' + sx + ' ' + (sy + 3.4) + ' L ' + (sx - 3.4) + ' ' + sy + ' Z'}
+            fill='#10151C' stroke={GOLD} strokeWidth={1.2} />,
+        );
+      }
+    }
+    gThreads.push(
+      <g key={'t' + t.sid} className='thread' data-sid={t.sid} style={{ cursor: 'pointer' }}
+        opacity={dimmed ? 0.3 : 1}
+        onMouseEnter={() => setHover(t.sid)} onMouseLeave={() => setHover(null)}
+        onClick={() => setSelId(selId === t.sid ? null : t.sid)}>
+        {g}
+      </g>,
+    );
+  }
+  // ---- requirement nodes (no gold ring — tangling is a thread-level concept) ----
+  const gNodes: React.ReactNode[] = [];
+  for (const r of visibleReqs) {
+    const p = pos.get(r.id);
+    if (!p) continue;
+    const dimmed = focus !== null && focus !== r.sessionId;
+    const hue = hueOf(r.proj);
+    const pname = r.proj === 'unk' ? '未归属' : laneName(r.proj);
+    gNodes.push(
+      <g key={r.id} data-sid={r.sessionId} style={{ cursor: 'pointer' }}
+        opacity={dimmed ? 0.14 : 1}
+        onMouseEnter={() => setHover(r.sessionId)} onMouseLeave={() => setHover(null)}
+        onClick={() => setSelId(selId === r.sessionId ? null : r.sessionId)}>
+        <circle cx={p.x} cy={p.y} r={p.r} fill={rgba(hue, 0.9)} stroke='#10151C' strokeWidth={1}>
+          <title>{r.req + ' · ' + pname + ' · ' + (r.events || 0) + ' events · ' + dayLabelOf(base, r.day) + ' · ' + r.origin}</title>
+        </circle>
+      </g>,
+    );
+  }
+  // ---- lane bands + labels ----
+  const laneBands: React.ReactNode[] = [];
+  const laneLabels: React.ReactNode[] = [];
+  lanes.forEach((l, i) => {
+    laneBands.push(
+      <g key={'lb' + l.id}>
+        <rect x={0} y={TOP + i * laneH} width={W} height={laneH} fill={l.id === 'unk' ? 'rgba(90,102,116,0.05)' : rgba(l.hue, i % 2 ? 0.05 : 0.03)} />
+        <line x1={0} y1={TOP + i * laneH} x2={W} y2={TOP + i * laneH} stroke='#1C242F' strokeWidth={0.7} />
+      </g>,
+    );
+    laneLabels.push(
+      <div key={l.id} style={{ position: 'absolute', top: laneY(i) - 14, right: 10, fontFamily: T.mono, fontSize: 10.5, textAlign: 'right', lineHeight: 1.3, color: l.hue }}>
+        {l.name.length > 14 ? l.name.slice(0, 14) + '…' : l.name}
+        {l.ev !== undefined && <div style={{ fontSize: 8.5, color: T.faint }}>{l.ev.toLocaleString()} ev</div>}
+      </div>,
+    );
+  });
+  const dayLines: React.ReactNode[] = [];
+  for (let d = 0; d < data.days; d++) {
+    dayLines.push(
+      <g key={'d' + d}>
+        <line x1={d * dayW} y1={TOP} x2={d * dayW} y2={H - 4} stroke='#1C242F' strokeWidth={0.7} />
+        <text x={d * dayW + dayW / 2} y={15} textAnchor='middle' fill={T.faint} fontSize={9} fontFamily={T.mono}>{dayLabelOf(base, d)}</text>
+      </g>,
+    );
+  }
+  const sel = selId !== null ? sessById.get(selId) : undefined;
   return (
-    <div style={{ display: 'flex', height: '100%', minHeight: 0 }}>
-      <div style={{ width: 104, flexShrink: 0, position: 'relative', borderRight: '1px solid ' + T.line }}>
-        {lanes.map((l) => (
-          <div key={l.id} style={{ position: 'absolute', top: laneY(l.id) - 9, right: 10, fontFamily: T.mono, fontSize: 10.5, color: l.hue }}>{l.name.length > 10 ? l.name.slice(0, 10) + '…' : l.name}</div>
-        ))}
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '4px 12px', borderBottom: '1px solid ' + T.line, flexShrink: 0, fontFamily: T.mono, fontSize: 10, color: T.muted }}>
+        <span>{visibleReqs.length} 需求</span>
+        <span>{visibleThreads.length} 会话线</span>
+        <span style={{ color: GOLD }}>{tangledThreads.length} 缠绕线</span>
+        <span>切换点 {switchCount}</span>
+        <button onClick={() => setTangledOnly(!tangledOnly)} style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', background: tangledOnly ? rgba(GOLD, 0.14) : 'transparent', border: '1px solid ' + (tangledOnly ? rgba(GOLD, 0.5) : T.line), color: tangledOnly ? T.text : T.faint, borderRadius: 3, padding: '1px 7px', fontFamily: T.mono, fontSize: 10 }}>
+          <span style={{ width: 7, height: 7, borderRadius: 2, background: tangledOnly ? GOLD : T.faint }} />只看缠绕线
+        </button>
       </div>
-      <div style={{ flex: 1, overflow: 'auto' }}>
+      <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+      <div style={{ width: 118, flexShrink: 0, position: 'relative', borderRight: '1px solid ' + T.line, overflow: 'hidden' }}>
+        {laneLabels}
+      </div>
+      <div ref={wrapRef} style={{ flex: 1, overflow: 'auto', minWidth: 0 }}>
         <svg width={W} height={H} style={{ display: 'block' }}>
-          {lanes.map((l, k) => (
-            <rect key={l.id} x={0} y={TOPH + k * LANE_H} width={W} height={LANE_H} fill={l.id === 'unk' ? 'rgba(90,102,116,0.05)' : rgba(l.hue, k % 2 ? 0.045 : 0.028)} />
-          ))}
-          {Array.from({ length: data.days }, (_, d) => (
-            <g key={d}>
-              <line x1={d * DAY_W} y1={TOPH} x2={d * DAY_W} y2={H - 10} stroke='#1C242F' strokeWidth={0.7} />
-              <text x={d * DAY_W + DAY_W / 2} y={16} textAnchor='middle' fill={T.faint} fontSize={9} fontFamily={T.mono}>{dayLabelOf(base, d)}</text>
-            </g>
-          ))}
-          {(data.links ?? []).map((l, k) => {
-            const a = reqMap.get(l.from);
-            const b = l.toSession !== undefined
-              ? data.requirements.find((r) => r.id === l.to && r.sessionId === l.toSession)
-              : reqMap.get(l.to);
-            if (a === undefined || b === undefined) return null;
-            const dim = focus !== null && focus !== a.sessionId && focus !== b.sessionId;
-            const color = l.kind === 'forked-from' ? '#C77DDF' : l.kind === 'executed-in' ? '#3FA79B' : '#E3A63B';
-            const dashed = l.kind === 'derives' || l.kind === 'executed-in';
-            return (
-              <path key={'l' + k} d={'M ' + px(a) + ' ' + py(a) + ' L ' + px(b) + ' ' + py(b)}
-                fill='none' stroke={color} strokeWidth={1} strokeDasharray={dashed ? '3 3' : 'none'}
-                opacity={dim ? 0.12 : 0.65} />
-            );
-          })}
-          {[...threads.entries()].map(([sid, reqs]) => {
-            const dimmed = focus !== null && focus !== sid;
-            const pts = reqs.map((r) => ({ x: px(r), y: py(r) }));
-            return (
-              <path key={'t' + sid} d={pts.map((p, k) => (k === 0 ? 'M ' + p.x + ' ' + p.y : ' L ' + p.x + ' ' + p.y)).join(' ')}
-                fill='none' stroke={T.line} strokeWidth={1.2} strokeDasharray='2 3' opacity={dimmed ? 0.2 : 0.7} />
-            );
-          })}
-          {data.requirements.map((r) => {
-            const dimmed = focus !== null && focus !== r.sessionId;
-            const radius = 2.5 + Math.min(8.5, Math.log2(1 + r.events) * 1.1);
-            const sess = data.sessions.find((s) => s.id === r.sessionId);
-            const tangled = sess !== undefined && sess.projects.length > 1;
-            return (
-              <g key={r.id} opacity={dimmed ? 0.14 : 1} style={{ cursor: 'pointer' }}
-                onMouseEnter={() => setHover(r.sessionId)} onMouseLeave={() => setHover(null)}
-                onClick={() => setSelId(selId === r.sessionId ? null : r.sessionId)}>
-                {tangled && <circle cx={px(r)} cy={py(r)} r={radius + 3} fill='none' stroke={GOLD} strokeWidth={1.2} />}
-                <circle cx={px(r)} cy={py(r)} r={radius} fill={rgba(hueOf(r.proj), 0.9)} stroke={T.bg} strokeWidth={1}>
-                  <title>{r.req + ' · ' + dayLabelOf(base, r.day) + ' · ' + r.events + ' events · ' + (r.proj === 'unk' ? '未归属' : r.proj.slice(0, 10)) + (tangled ? ' · 缠绕' : '')}</title>
-                </circle>
-                <button onClick={(ev) => { ev.stopPropagation(); onJump({ sessionId: r.sessionId, messageId: r.messageId }) }}
-                  style={{ position: 'absolute', left: px(r) + radius + 2, top: py(r) - radius - 8, background: 'none', border: 'none', color: T.faint, fontFamily: T.mono, fontSize: 8.5, cursor: r.messageId ? 'pointer' : 'default', padding: 0 }}>↩</button>
-              </g>
-            );
-          })}
+          {laneBands}
+          {dayLines}
+          {gLinks}
+          {gThreads}
+          {gNodes}
         </svg>
       </div>
+    </div>
     </div>
   );
 }
@@ -356,7 +475,7 @@ export function CalendarYarnRoot(props: CalProps) {
           <div style={{ fontFamily: T.mono, fontSize: 14, letterSpacing: 1 }}>dsh-track<span style={{ color: T.faint }}> / </span><span style={{ color: T.muted }}>日历纱线</span></div>
           <div style={{ fontFamily: T.mono, fontSize: 10.5, color: T.muted }}>{list.length} sessions · <span style={{ color: GOLD }}>{tangled.length} 缠绕</span> · 需求 {totReq} · 指示 {totIns}</div>
           <div style={{ fontFamily: T.mono, fontSize: 10, color: T.faint }}>用户 {data.sessions.filter((s) => s.origin === 'user').length} · 子代理 {data.sessions.filter((s) => s.origin === 'subagent').length} · 自动 {data.sessions.filter((s) => s.origin === 'auto').length}</div>
-          <div style={{ marginLeft: 'auto', fontFamily: T.mono, fontSize: 9.5, color: T.faint }}>节点=需求(大小=工作量) · 紫线=子代理继承 · 黄虚线=需求派生 · 青虚线=跨会话共执行 · 泳道=会话触碰的全部仓库 · 金环=跨项目缠绕</div>
+          <div style={{ marginLeft: 'auto', fontFamily: T.mono, fontSize: 9.5, color: T.faint }}>节点=需求(大小=工作量) · 灰线=同会话需求序列 · ◆=线上项目切换 · 紫=子代理继承 · 黄虚线=派生 · 青虚线=跨会话共执行</div>
         </div>
         <div style={{ display: 'flex', gap: 6, margin: '10px 0', flexWrap: 'wrap' }}>
           {(['user', 'subagent', 'auto'] as CalOrigin[]).map((o) => {
