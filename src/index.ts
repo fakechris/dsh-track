@@ -1048,13 +1048,13 @@ export function apply(ctx: Context, config?: Config) {
       // so the panel can mark done-without-commit work instead of hiding it.
       if (!includeDeleted) {
         const links = await store.listLinks()
-        const implByIssue = new Map<string, { best: Link['evidenceKind'] | undefined; confidence: number; count: number }>()
+        const implByIssue = new Map<string, { best: Link['evidenceKind'] | undefined; confidence: number; count: number; limitations?: string[] }>()
         for (const l of links) {
           if (l.kind !== 'implements') continue
-          const cur = implByIssue.get(l.fromId) ?? { best: undefined, confidence: 0, count: 0 }
+          const cur = implByIssue.get(l.fromId) ?? { best: undefined, confidence: 0, count: 0, limitations: undefined }
           cur.count += 1
           const conf = l.confidence ?? 0
-          if (conf > cur.confidence) { cur.confidence = conf; cur.best = l.evidenceKind ?? 'candidate' }
+          if (conf > cur.confidence) { cur.confidence = conf; cur.best = l.evidenceKind ?? 'candidate'; cur.limitations = l.limitations }
           implByIssue.set(l.fromId, cur)
         }
         const annotated = issues.map((i) => {

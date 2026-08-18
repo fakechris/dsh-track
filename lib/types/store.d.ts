@@ -53,6 +53,7 @@ export type CaptureCreateResult = {
     status: 'duplicate';
     existing?: Capture;
 };
+export declare function enforceEvidenceDiscipline(link: Link): Link;
 export declare class TrackStore {
     private readonly descriptor;
     private unit;

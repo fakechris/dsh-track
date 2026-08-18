@@ -94,6 +94,34 @@ export type CaptureCreateResult =
 /** One serialized write chain per table keeps KV ordering sane. */
 type WriteChain = Promise<unknown>
 
+/**
+ * P6 — layered-discipline evidence guard (aligned with Better Harness:
+ * the semantic layer can never fabricate deterministic evidence).
+ *
+ * Only EXPLICIT declarations may claim `declared`/`observed` evidence:
+ * - explicit methods: typed commit trailers (`trailer`), direct user refs (`user`).
+ * Everything else is derived:
+ * - heuristic methods (commit-window / title-overlap): time/similarity hints;
+ * - semantic methods (promotion / identity / session-link / session-lineage /
+ *   parent / supersedes / decision-record): LLM or clustering-derived.
+ *
+ * A strong evidenceKind on a non-explicit method is COERCED DOWN to
+ * `candidate` (never the reverse — weak evidence is never presented as
+ * strong). The coercion is the guarantee; it cannot throw the pipeline.
+ */
+const EXPLICIT_LINK_METHODS = new Set(['trailer', 'user'])
+const STRONG_EVIDENCE = new Set<Link['evidenceKind']>(['declared', 'observed'])
+
+export function enforceEvidenceDiscipline(link: Link): Link {
+  if (link.evidenceKind !== undefined
+    && STRONG_EVIDENCE.has(link.evidenceKind)
+    && (link.linkMethod === undefined || !EXPLICIT_LINK_METHODS.has(link.linkMethod))) {
+    console.warn(`[dsh-track] evidence guard: ${link.kind} link via '${link.linkMethod ?? 'unknown'}' cannot be ${link.evidenceKind} — downgraded to candidate`)
+    return { ...link, evidenceKind: 'candidate' }
+  }
+  return link
+}
+
 export class TrackStore {
   private unit!: KvUnit
   private chains: Record<string, WriteChain> = {}
@@ -877,7 +905,8 @@ export class TrackStore {
 
   async upsertLink(link: Link): Promise<void> {
   await this.ready()
-    await this.chain('links', () => this.unit.putRecord('links', link.id, link))
+    const safe = enforceEvidenceDiscipline(link)
+    await this.chain('links', () => this.unit.putRecord('links', safe.id, safe))
   }
 
   /** All links touching one entity id (either direction). */

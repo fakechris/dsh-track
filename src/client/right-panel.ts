@@ -177,8 +177,8 @@ function jumpScrollIntoView(row: HTMLElement): void {
 
 interface Snapshot {
   captures: Capture[]
-  /** GET /issues annotates each issue with its best commit evidence (P0). */
-  issues: Array<Issue & { commitEvidence?: { best?: string; confidence?: number; count: number } | null }>
+  /** GET /issues annotates each issue with its best commit evidence (P0/P4). */
+  issues: Array<Issue & { commitEvidence?: { best?: string; confidence?: number; count: number; limitations?: string[] } | null }>
 }
 
 const EMPTY: Snapshot = { captures: [], issues: [] }
@@ -761,12 +761,18 @@ function renderIssueCard(i: Issue & { commitEvidence?: Snapshot['issues'][number
     : ''
   // P0 (Output-first): done work with no observed commit evidence is flagged,
   // and candidate-only (heuristic) links are labeled instead of passing for
-  // real provenance.
+  // real provenance. P4: the tooltip carries strength, confidence, and the
+  // limitation copy ("what this does NOT prove").
   const commitEvidence = i.commitEvidence
+  const evTip = (ev: Snapshot['issues'][number]['commitEvidence']): string => {
+    const conf = typeof ev?.confidence === 'number' ? ' · 置信度 ' + ev.confidence : ''
+    const limits = (ev?.limitations ?? []).join(' ')
+    return '落地证据：' + (ev?.best ?? 'candidate') + conf + (limits ? ' · ' + limits : '')
+  }
   const commitBadge = i.state === 'done' && (commitEvidence === null || commitEvidence === undefined)
     ? '<span class="inv-commit-badge inv-commit-missing" title="已标记完成但没有落地 commit 证据">⚠ 无落地</span>'
     : commitEvidence !== null && commitEvidence !== undefined && commitEvidence.best === 'candidate'
-      ? '<span class="inv-commit-badge" title="仅有启发式 commit 关联（时间窗口/标题相似），非声明证据">≈ 弱证据</span>'
+      ? '<span class="inv-commit-badge" title="' + escapeHtml(evTip(commitEvidence)) + '">≈ 弱证据</span>'
       : ''
   const terminal = i.state === 'done' || i.state === 'canceled'
   const sel = batchMode && !terminal
@@ -811,8 +817,16 @@ function renderIssueCard(i: Issue & { commitEvidence?: Snapshot['issues'][number
 }
 
 /** Full detail body for one issue (shown when expanded). */
-function renderIssueDetail(i: Issue): string {
+function renderIssueDetail(i: Issue & { commitEvidence?: Snapshot['issues'][number]['commitEvidence'] }): string {
   const parts: string[] = []
+  // P4: output-evidence drawer — the strongest implements link, its strength,
+  // confidence, and what it does NOT prove.
+  const ev = i.commitEvidence
+  if (ev !== null && ev !== undefined) {
+    const evLabel: Record<string, string> = { declared: '声明', observed: '观测', candidate: '启发', unmapped: '未归属' }
+    const limits = (ev.limitations ?? []).join(' ')
+    parts.push(`<div class="inv-detail-row"><span class="inv-detail-label">落地</span><span>${evLabel[ev.best ?? 'candidate'] ?? ev.best ?? 'candidate'}（${ev.count} commit）${typeof ev.confidence === 'number' ? ' · 置信度 ' + ev.confidence : ''}${limits ? ' · ' + escapeHtml(limits) : ''}</span></div>`)
+  }
   if (i.description) {
     parts.push(`<div class="inv-detail-row"><span class="inv-detail-label">描述</span><div class="inv-detail-text">${escapeHtml(i.description)}</div></div>`)
   }
@@ -842,7 +856,7 @@ interface LineageViewLite {
   target: { id: string; kind: string; title: string; state?: string; origin?: string }
   neighbors: Record<string, { id: string; kind: string; title: string; meta?: Record<string, string | undefined> }>
   evidence: Array<{ sessionId: string; seqStart: number; seqEnd: number; kind: string; promptMessageId?: string; userMessages: Array<{ messageId?: string; title: string; seqStart: number; seqEnd: number }> }>
-  commits: Array<{ id: string; sha: string; subject: string; authorAt: number; evidenceKind?: string; confidence?: number }>
+  commits: Array<{ id: string; sha: string; subject: string; authorAt: number; evidenceKind?: string; confidence?: number; limitations?: string[] }>
   edges: Array<{ kind: string; fromId: string; toId: string; linkMethod?: string; direction: 'out' | 'in' }>
 }
 
@@ -889,8 +903,13 @@ function renderLineageHtml(view: LineageViewLite, issueId: string): string {
     for (const c of view.commits) {
       const ev = evLabel[c.evidenceKind ?? 'candidate'] ?? '启发'
       const evCls = ['declared', 'observed'].includes(c.evidenceKind ?? '') ? 'inv-lg-ev-strong' : 'inv-lg-ev-weak'
+      // P4: the evidence drawer — strength, confidence, and the fixed
+      // limitation copy ("what this does NOT prove") on the same row.
+      const conf = typeof c.confidence === 'number' ? ' · 置信度 ' + c.confidence : ''
+      const limits = (c.limitations ?? []).join(' ')
+      const tip = '证据强度：' + ev + '（' + (c.evidenceKind ?? 'candidate') + '）' + conf + (limits ? ' · ' + limits : '')
       parts.push('<div class="inv-lg-row">' + escapeHtml(c.sha.slice(0, 10)) + ' · ' + escapeHtml(c.subject.slice(0, 60)) + ' · ' + new Date(c.authorAt).toLocaleDateString()
-        + '<span class="' + evCls + '" title="证据强度：' + ev + '（' + (c.evidenceKind ?? 'candidate') + '）">' + ev + '</span></div>')
+        + '<span class="' + evCls + '" title="' + escapeHtml(tip) + '">' + ev + '</span></div>')
     }
   }
   if (parts.length === 1) parts.push('<div class="inv-empty">暂无谱系数据</div>')
