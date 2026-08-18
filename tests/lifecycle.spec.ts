@@ -162,6 +162,9 @@ describe('lifecycle store integration (real json backend)', () => {
     expect(r2?.issue.state).toBe('in_progress') // auto-committed
 
     const r3 = await trackStore.recordIssueEvidence('track_issue_flow', { signal: 'todo-all-done', at: now - 500, weight: 0.6, sessionId: 'session-y' }, 'session-y', now)
+    // P0 (Output-first): done proposal now also requires commit-observed —
+    // process completion alone no longer proposes done.
+    await trackStore.recordIssueEvidence('track_issue_flow', { signal: 'commit-observed', at: now - 250, weight: 0.55, sessionId: 'session-y', pointer: 'abc12345' }, 'session-y', now)
     const r4 = await trackStore.recordIssueEvidence('track_issue_flow', { signal: 'turn-completed', at: now, weight: 0.3, sessionId: 'session-y' }, 'session-y', now)
     expect(r4?.issue.inferred?.state).toBe('done')
     expect(r4?.confirm?.to).toBe('done')
@@ -188,11 +191,29 @@ describe('lifecycle store integration (real json backend)', () => {
     const now = Date.now()
     await trackStore.upsertIssue(makeIssue({ id, identifier: 'INV-82', state: 'in_progress' }))
     await trackStore.recordIssueEvidence(id, { signal: 'todo-all-done', at: now - 1000, weight: 0.6 }, 's', now)
+    await trackStore.recordIssueEvidence(id, { signal: 'commit-observed', at: now - 500, weight: 0.55, pointer: 'deadbeef' }, 's', now)
     const r = await trackStore.recordIssueEvidence(id, { signal: 'turn-completed', at: now, weight: 0.3 }, 's', now)
     expect(r?.confirm?.to).toBe('done')
     const issue = await trackStore.getIssue(id)
     expect(issue?.pendingConfirm?.to).toBe('done')
     expect(issue?.state).toBe('in_progress') // still gated
+  })
+
+  it('recordIssueEvidenceMany applies signals to many issues with one store load', async () => {
+    const now = Date.now()
+    for (const [id, inv] of [['track_issue_bm1', 'INV-71'], ['track_issue_bm2', 'INV-72']] as const) {
+      await trackStore.upsertIssue(makeIssue({ id, identifier: inv, state: 'in_progress' }))
+    }
+    const written = await trackStore.recordIssueEvidenceMany([
+      { issueId: 'track_issue_bm1', signal: { signal: 'commit-observed', at: now - 1000, weight: 0.55, pointer: 'abc123de' } },
+      { issueId: 'track_issue_bm2', signal: { signal: 'commit-observed', at: now - 1000, weight: 0.55, pointer: 'deadbeef' } },
+    ], now)
+    expect(written).toBe(2)
+    const [a, b] = [await trackStore.getIssue('track_issue_bm1'), await trackStore.getIssue('track_issue_bm2')]
+    expect((a?.inferred?.evidence ?? []).some((e) => e.signal === 'commit-observed' && e.pointer === 'abc123de')).toBe(true)
+    expect((b?.inferred?.evidence ?? []).some((e) => e.signal === 'commit-observed' && e.pointer === 'deadbeef')).toBe(true)
+    // Missing issue ids are skipped, not fatal.
+    expect(await trackStore.recordIssueEvidenceMany([{ issueId: 'track_issue_nope', signal: { signal: 'commit-observed', at: now, weight: 0.55 } }], now)).toBe(0)
   })
 
   it('sweepLifecycle surfaces done/canceled proposals for unattached sync-created issues', async () => {
@@ -204,6 +225,7 @@ describe('lifecycle store integration (real json backend)', () => {
         state: 'in_progress', confidence: 0.8, at: now - 3 * 86400_000, by: 'auto',
         evidence: [
           { signal: 'todo-all-done', at: now - 3 * 86400_000, weight: 0.6 },
+          { signal: 'commit-observed', at: now - 3 * 86400_000, weight: 0.55, pointer: 'aabbccdd' },
           { signal: 'turn-completed', at: now - 3 * 86400_000, weight: 0.3 },
         ],
       },

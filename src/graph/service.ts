@@ -135,7 +135,14 @@ export interface GraphViewNode {
   messageId?: string
   state?: string
 }
-export interface GraphViewEdge { from: string; to: string; kind: string }
+export interface GraphViewEdge {
+  from: string
+  to: string
+  kind: string
+  /** Evidence strength of landed-in/implements edges (P1) — absent on legacy. */
+  evidenceKind?: 'declared' | 'observed' | 'candidate' | 'unmapped'
+  confidence?: number
+}
 export interface GraphViewData { nodes: GraphViewNode[]; edges: GraphViewEdge[] }
 export async function projectGraphView(store: TrackStore, projectId?: string): Promise<GraphViewData> {
   const graphs = await store.listGraphs()
@@ -167,14 +174,16 @@ export async function projectGraphView(store: TrackStore, projectId?: string): P
   const nodes: GraphViewNode[] = [...sessionNodes, ...issueNodes, ...commitNodes, ...decisionNodes]
   const nodeIds = new Set(nodes.map((n) => n.id))
   const edges: GraphViewEdge[] = []
-  const addEdge = (from: string, to: string, kind: string): void => { if (nodeIds.has(from) && nodeIds.has(to)) edges.push({ from, to, kind }) }
+  const addEdge = (from: string, to: string, kind: string, evidenceKind?: GraphViewEdge['evidenceKind'], confidence?: number): void => {
+    if (nodeIds.has(from) && nodeIds.has(to)) edges.push({ from, to, kind, evidenceKind, confidence })
+  }
   for (const g of graphs) {
     if (g.header.parentSession !== undefined && sessionSet.has(g.sessionId) && sessionSet.has(g.header.parentSession)) addEdge('s:' + g.sessionId, 's:' + g.header.parentSession, 'forked-from')
   }
   for (const l of links) {
     if (l.kind === 'executed-in' && nodeIds.has('i:' + l.fromId) && nodeIds.has('s:' + l.toId)) addEdge('i:' + l.fromId, 's:' + l.toId, 'executed-in')
-    else if (l.kind === 'landed-in' && nodeIds.has('s:' + l.fromId) && nodeIds.has('c:' + l.toId)) addEdge('s:' + l.fromId, 'c:' + l.toId, 'landed-in')
-    else if (l.kind === 'implements' && nodeIds.has('i:' + l.fromId) && nodeIds.has('c:' + l.toId)) addEdge('i:' + l.fromId, 'c:' + l.toId, 'implements')
+    else if (l.kind === 'landed-in' && nodeIds.has('s:' + l.fromId) && nodeIds.has('c:' + l.toId)) addEdge('s:' + l.fromId, 'c:' + l.toId, 'landed-in', l.evidenceKind ?? 'candidate', l.confidence)
+    else if (l.kind === 'implements' && nodeIds.has('i:' + l.fromId) && nodeIds.has('c:' + l.toId)) addEdge('i:' + l.fromId, 'c:' + l.toId, 'implements', l.evidenceKind ?? 'candidate', l.confidence)
     else if (l.kind === 'raised-in' && nodeIds.has('d:' + l.fromId) && nodeIds.has('s:' + l.toId)) addEdge('d:' + l.fromId, 's:' + l.toId, 'raised-in')
   }
   return { nodes, edges }

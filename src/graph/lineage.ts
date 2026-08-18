@@ -121,12 +121,12 @@ export async function buildLineage(store: TrackStore, entity: string): Promise<L
       evidence.push({ sessionId: c.sessionId, seqStart: c.seqStart, seqEnd: c.seqEnd, kind: c.kind, promptMessageId: issue?.promptMessageId, userMessages })
     }
   }
-  const commits: Array<{ id: string; sha: string; subject: string; authorAt: number }> = []
+  const commits: Array<{ id: string; sha: string; subject: string; authorAt: number; evidenceKind?: 'declared' | 'observed' | 'candidate' | 'unmapped'; confidence?: number }> = []
   for (const l of links) {
     if (l.kind != 'implements') continue
     const commitId = l.fromId === target.id ? l.toId : l.fromId
     const cm = await store.getCommit(commitId)
-    if (cm) commits.push({ id: cm.id, sha: cm.sha, subject: cm.subject, authorAt: cm.authorAt })
+    if (cm) commits.push({ id: cm.id, sha: cm.sha, subject: cm.subject, authorAt: cm.authorAt, evidenceKind: l.evidenceKind ?? 'candidate', confidence: l.confidence })
   }
   const sorted = commits.slice().sort(function (a, b) { return b.authorAt - a.authorAt })
   return {

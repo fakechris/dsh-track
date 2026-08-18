@@ -37,6 +37,12 @@ export interface Capture {
     createdAt: string;
     /** Issue id when this capture was promoted. */
     promotedToIssueId?: string;
+    /**
+     * Soft-delete tombstone (2026-08-18): deletion marks, it never removes —
+     * a deleted capture keeps its full record and is only hidden from default
+     * listings. Deletion is a strong user negation; the row stays queryable.
+     */
+    deletedAt?: string;
 }
 /**
  * Evidence pointer from a semantic node back to the raw session log
@@ -147,6 +153,19 @@ export interface Issue {
         reason: string;
         at: number;
     };
+    /**
+     * Soft-delete tombstone (2026-08-18): deletion marks, it never removes —
+     * a deleted issue keeps its full record (title, description, evidence
+     * ledger, links) and is only hidden from default listings. Deletion is a
+     * strong user negation: the row stays queryable (includeDeleted), the
+     * `user-delete` evidence signal is recorded in the ledger, and an audit
+     * entry is appended. The identifier is never reused.
+     */
+    deletedAt?: string;
+    /** Who deleted the issue ('user' from the panel/API; agent/auto reserved). */
+    deletedBy?: 'user' | 'agent' | 'auto';
+    /** Optional user-stated reason for the deletion. */
+    deletedReason?: string;
 }
 /** One piece of lifecycle evidence (the state machine's input). */
 export interface EvidenceRef {
@@ -162,7 +181,7 @@ export interface EvidenceRef {
     pointer?: string;
 }
 /** Lifecycle evidence signals the observer can collect. */
-export type LifecycleSignal = 'user-confirm' | 'todo-all-done' | 'turn-completed' | 'turn-error' | 'turn-blocked' | 'tool-error' | 'activity' | 'model-propose' | 'timeout';
+export type LifecycleSignal = 'user-confirm' | 'todo-all-done' | 'turn-completed' | 'turn-error' | 'turn-blocked' | 'tool-error' | 'activity' | 'model-propose' | 'timeout' | 'commit-observed' | 'user-delete';
 /** Machine-proposed lifecycle state (attached to an Issue as `inferred`). */
 export interface IssueInferred {
     /** Proposed Linear-compatible state. */
@@ -204,8 +223,30 @@ export interface Link {
     eventTime?: number;
     /** When track ingested this relation (ingestion time, ISO). Defaults to createdAt. */
     ingestedAt?: string;
-    /** How this edge was derived: deterministic | identity | commit-window | title-overlap | user. */
+    /**
+     * How this edge was derived: trailer | commit-window | title-overlap |
+     * identity | session-link | session-lineage | user | promotion |
+     * decision-record. This is the METHOD (mechanism), not the evidence
+     * strength — see evidenceKind/confidence for the quality of the relation.
+     * (2026-08-18: the old 'deterministic' default conflated idempotent-hash
+     * with evidence quality; methods are now explicit per link.)
+     */
     linkMethod?: string;
+    /**
+     * Evidence strength of this relation (2026-08-18, aligned with
+     * Better Harness): declared (reviewed explicit ref/trailer — the only
+     * provenance) > observed (typed host evidence) > candidate (time-window /
+     * title-overlap heuristics awaiting review) > unmapped. Absent on legacy
+     * links written before grading — treat as candidate.
+     */
+    evidenceKind?: 'declared' | 'observed' | 'candidate' | 'unmapped';
+    /** Evidence confidence in [0,1]. Absent on legacy links. */
+    confidence?: number;
+    /**
+     * Fixed human-readable limitations of what this link does NOT prove
+     * (the UI never upgrades weak-evidence wording).
+     */
+    limitations?: string[];
 }
 /**
  * M1 event-graph — the deterministic execution tree of one session.
@@ -416,7 +457,7 @@ export declare const DEFAULT_TRACK_CONFIG: TrackConfig;
 export interface AuditEntry {
     id: string;
     /** The tool that ran: capture_thought | report_decision_point | track_create_issue | track_sync_history | track_usage | track_backfill_captures | track_respond_decision | track_list_decisions | track_attach_issue | track_update_issue_state | track_issue_evidence. */
-    tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history' | 'track_usage' | 'track_backfill_captures' | 'track_respond_decision' | 'track_list_decisions' | 'track_attach_issue' | 'track_update_issue_state' | 'track_issue_evidence' | 'track_session_graph' | 'track_genealogy' | 'track_git_artifacts' | 'track_evolution_brief';
+    tool: 'capture_thought' | 'report_decision_point' | 'track_create_issue' | 'track_sync_history' | 'track_usage' | 'track_backfill_captures' | 'track_respond_decision' | 'track_list_decisions' | 'track_attach_issue' | 'track_update_issue_state' | 'track_issue_evidence' | 'track_session_graph' | 'track_genealogy' | 'track_git_artifacts' | 'track_evolution_brief' | 'track_delete_issue' | 'track_delete_capture';
     /** Epoch ms of the invocation. */
     ts: number;
     /** Owning agent session id when available. */
@@ -496,10 +537,22 @@ export interface CommitArtifact {
     projectId: string;
     /** Repo cwd the commit was scanned from. */
     repo: string;
-    /** Author date, epoch ms. */
+    /** Author date, epoch ms (display). */
     authorAt: number;
+    /** Committer date, epoch ms (production-time correlation — P2). */
+    committedAt: number;
     /** Commit subject line (first line of the message). */
     subject: string;
+    /** Commit message body (bounded) — source of typed trailers (P2). */
+    body?: string;
+    /**
+     * Typed trailers parsed from the body (P2 explicit channel):
+     * `Track-Issue: INV-12` / `Harness-Session: <session-id>`.
+     */
+    trailers?: Array<{
+        key: string;
+        value: string;
+    }>;
     createdAt: string;
 }
 /**

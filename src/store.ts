@@ -192,10 +192,11 @@ export class TrackStore {
 
   // ---- captures ----
 
-  async listCaptures(status?: Capture['status']): Promise<Capture[]> {
+  async listCaptures(status?: Capture['status'], opts: { includeDeleted?: boolean } = {}): Promise<Capture[]> {
   await this.ready()
     const { tables } = await this.unit.loadAll()
-    const caps = Object.values(tables.captures ?? {}) as Capture[]
+    let caps = Object.values(tables.captures ?? {}) as Capture[]
+    if (!opts.includeDeleted) caps = caps.filter((c) => c.deletedAt === undefined)
     return status ? caps.filter((c) => c.status === status) : caps
   }
 
@@ -320,7 +321,30 @@ export class TrackStore {
     return (tables.captures ?? {})[id] as Capture | undefined
   }
 
-  async deleteCapture(id: string): Promise<void> {
+  /**
+   * Soft-delete a capture (2026-08-18): marks `deletedAt`, never removes the
+   * row — deletion is a strong user negation and the record must stay
+   * complete and queryable. Default listings hide tombstones.
+   */
+  async deleteCapture(id: string, opts: { by?: 'user' | 'agent' | 'auto'; reason?: string } = {}): Promise<Capture | undefined> {
+  await this.ready()
+    const capture = await this.getCapture(id)
+    if (!capture) return undefined
+    const now = Date.now()
+    const updated: Capture = { ...capture, deletedAt: new Date(now).toISOString() }
+    await this.chain('captures', () => this.unit.putRecord('captures', id, updated))
+    await this.appendAudit({
+      id: makeId('audit'),
+      tool: 'track_delete_capture',
+      ts: now,
+      ok: true,
+      detail: `capture deleted (${opts.by ?? 'user'})${opts.reason ? `: ${opts.reason}` : ''}`,
+    })
+    return updated
+  }
+
+  /** Hard-delete a capture record (tests / storage cleanup — NOT the user path). */
+  async purgeCapture(id: string): Promise<void> {
   await this.ready()
     await this.chain('captures', () => this.unit.deleteRecord('captures', id))
   }
@@ -412,10 +436,11 @@ export class TrackStore {
 
   // ---- issues ----
 
-  async listIssues(teamId?: string, state?: Issue['state']): Promise<Issue[]> {
+  async listIssues(teamId?: string, state?: Issue['state'], opts: { includeDeleted?: boolean } = {}): Promise<Issue[]> {
   await this.ready()
     const { tables } = await this.unit.loadAll()
     let issues = Object.values(tables.issues ?? {}) as Issue[]
+    if (!opts.includeDeleted) issues = issues.filter((i) => i.deletedAt === undefined)
     if (teamId) issues = issues.filter((i) => i.teamId === teamId)
     if (state) issues = issues.filter((i) => i.state === state)
     return issues
@@ -432,7 +457,55 @@ export class TrackStore {
     await this.chain('issues', () => this.unit.putRecord('issues', issue.id, issue))
   }
 
-  async deleteIssue(id: string): Promise<void> {
+  /**
+   * Soft-delete an issue (2026-08-18): marks `deletedAt`/`deletedBy`/
+   * `deletedReason`, records the strong-negation `user-delete` evidence into
+   * the issue's ledger, clears any pending confirmation, and appends an
+   * audit entry. The row is NEVER removed by the user path — the identifier
+   * stays durable and the full record (title, description, evidence, links)
+   * remains queryable via includeDeleted. Default listings hide tombstones.
+   * @returns the tombstoned issue, or undefined when not found.
+   */
+  async deleteIssue(id: string, opts: { by?: Issue['deletedBy']; reason?: string; sessionId?: string } = {}): Promise<Issue | undefined> {
+  await this.ready()
+    const issue = await this.getIssueByInput(id)
+    if (!issue) return undefined
+    const now = Date.now()
+    const evidence: EvidenceRef = {
+      signal: 'user-delete',
+      at: now,
+      weight: -1,
+      sessionId: opts.sessionId,
+      pointer: opts.reason ?? 'user deleted',
+    }
+    const updated: Issue = {
+      ...issue,
+      deletedAt: new Date(now).toISOString(),
+      deletedBy: opts.by ?? 'user',
+      deletedReason: opts.reason,
+      pendingConfirm: undefined,
+      // The negation is ALWAYS recorded — even when the issue never had an
+      // `inferred` ledger (fresh issues): evidence must survive the tombstone.
+      inferred: {
+        ...(issue.inferred ?? { state: issue.state, confidence: 0, at: now, by: 'auto' }),
+        evidence: [...(issue.inferred?.evidence ?? []), evidence].slice(-MAX_EVIDENCE),
+      },
+      updatedAt: new Date(now).toISOString(),
+    }
+    await this.chain('issues', () => this.unit.putRecord('issues', issue.id, updated))
+    await this.appendAudit({
+      id: makeId('audit'),
+      tool: 'track_delete_issue',
+      ts: now,
+      sessionId: opts.sessionId,
+      ok: true,
+      detail: `${issue.identifier} deleted (${opts.by ?? 'user'})${opts.reason ? `: ${opts.reason}` : ''}`,
+    })
+    return updated
+  }
+
+  /** Hard-delete an issue record (tests / storage cleanup — NOT the user path). */
+  async purgeIssue(id: string): Promise<void> {
   await this.ready()
     await this.chain('issues', () => this.unit.deleteRecord('issues', id))
   }
@@ -476,16 +549,13 @@ export class TrackStore {
   }
 
   /**
-   * Record one evidence signal against an issue, re-evaluate the state
-   * machine, and apply the result: write `inferred`, update `lastProgressAt`
-   * on positive signals, and auto-commit `state` only for the safe
-   * todo → in_progress transition. Confirmation-gated proposals (done /
-   * canceled) are returned in `confirm` and NOT written to `state`.
+   * Apply one evidence signal to an issue in memory: re-evaluate the state
+   * machine, write `inferred`, bump `lastProgressAt` on positive signals,
+   * auto-commit only the safe todo → in_progress transition, and surface
+   * confirmation-gated proposals (done/canceled) as `pendingConfirm`.
+   * Shared by the single-signal path and the batch path (one loadAll).
    */
-  async recordIssueEvidence(issueId: string, signal: EvidenceRef, sessionId: string, now = Date.now()): Promise<{ issue: Issue; confirm?: { to: Issue['state']; reason: string } } | null> {
-  await this.ready()
-    const issue = await this.getIssue(issueId)
-    if (!issue) return null
+  private applyEvidenceToIssue(issue: Issue, signal: EvidenceRef, now: number): Issue {
     const evidence = [...(issue.inferred?.evidence ?? []), signal].slice(-MAX_EVIDENCE)
     const next = nextInferred(issue, evidence, now)
     const updated: Issue = {
@@ -494,7 +564,7 @@ export class TrackStore {
         ? Math.max(issue.lastProgressAt ?? 0, signal.at)
         : issue.lastProgressAt,
       inferred: next.inferred,
-      updatedAt: new Date().toISOString(),
+      updatedAt: new Date(now).toISOString(),
     }
     // Auto-commit only the reversible todo → in_progress transition.
     if (isAutoCommit(next, issue)) {
@@ -509,8 +579,49 @@ export class TrackStore {
       // the union to the pendingConfirm contract.
       updated.pendingConfirm = { to: next.confirm.to as 'done' | 'canceled', reason: next.confirm.reason, at: now }
     }
+    return updated
+  }
+
+  /**
+   * Record one evidence signal against an issue, re-evaluate the state
+   * machine, and apply the result: write `inferred`, update `lastProgressAt`
+   * on positive signals, and auto-commit `state` only for the safe
+   * todo → in_progress transition. Confirmation-gated proposals (done /
+   * canceled) are returned in `confirm` and NOT written to `state`.
+   */
+  async recordIssueEvidence(issueId: string, signal: EvidenceRef, sessionId: string, now = Date.now()): Promise<{ issue: Issue; confirm?: { to: Issue['state']; reason: string } } | null> {
+  await this.ready()
+    const issue = await this.getIssue(issueId)
+    if (!issue) return null
+    const updated = this.applyEvidenceToIssue(issue, signal, now)
     await this.chain('issues', () => this.unit.putRecord('issues', issue.id, updated))
-    return { issue: updated, confirm: next.confirm }
+    // The machine only ever gates done/canceled (state-machine.ts) — the
+    // pendingConfirm union's 'review' arm never comes from evidence signals.
+    return { issue: updated, confirm: updated.pendingConfirm ? { to: updated.pendingConfirm.to as 'done' | 'canceled', reason: updated.pendingConfirm.reason } : undefined }
+  }
+
+  /**
+   * Record many evidence signals with ONE store load — the batch face for
+   * scan pipelines (track_git_artifacts) that fire signals for many issues.
+   * Each issue is loaded once, updated in memory, and written once; signals
+   * for the same issue are applied in order.
+   */
+  async recordIssueEvidenceMany(items: Array<{ issueId: string; signal: EvidenceRef }>, now = Date.now()): Promise<number> {
+  await this.ready()
+    if (items.length === 0) return 0
+    const { tables } = await this.unit.loadAll()
+    const issues = Object.values(tables.issues ?? {}) as Issue[]
+    const byId = new Map(issues.map((i) => [i.id, i]))
+    let written = 0
+    for (const item of items) {
+      const issue = byId.get(item.issueId)
+      if (!issue) continue
+      const updated = this.applyEvidenceToIssue(issue, item.signal, now)
+      byId.set(issue.id, updated)
+      await this.chain('issues', () => this.unit.putRecord('issues', issue.id, updated))
+      written += 1
+    }
+    return written
   }
 
   /**
