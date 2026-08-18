@@ -25,9 +25,14 @@ export interface CalSession {
   perDay: Array<{ day: number; dom: string; events: number; multi: boolean }>;
   segments: CalSegment[]; switches: number; nReq: number; nInstr: number; projects: string[];
 }
+export interface CalLink {
+  /** from requirement id -> to requirement id (both are yarn nodes). */
+  from: string; to: string; kind: 'forked-from' | 'derives'
+}
 export interface CalendarData {
   days: number; dayBase: string; projects: CalProject[];
   sessions: CalSession[]; requirements: CalRequirement[];
+  links: CalLink[];
 }
 
 const HUE_PALETTE = ['#E06A4E', '#E3A63B', '#3FA79B', '#5B8DE0', '#C77DDF', '#E0609E', '#8AA05B', '#D0604E']
@@ -54,7 +59,7 @@ export async function buildCalendar(store: TrackStore, maxDays = 18): Promise<Ca
   const projects = await store.listProjects()
   const graphs = await store.listGraphs()
   const issues = await store.listIssues()
-  const links = await store.listLinks()
+  const storeLinks = await store.listLinks()
   const projById = new Map(projects.map((p) => [p.id, p]))
   // Day window from the DATA range (no empty leading days).
   let minT = Number.MAX_SAFE_INTEGER, maxT = 0;
@@ -63,14 +68,14 @@ export async function buildCalendar(store: TrackStore, maxDays = 18): Promise<Ca
     if (n.createdAt > maxT) maxT = n.createdAt;
   }
   if (maxT === 0) {
-    return { days: 0, dayBase: new Date().toISOString(), projects: [], sessions: [], requirements: [] };
+    return { days: 0, dayBase: new Date().toISOString(), projects: [], sessions: [], requirements: [], links: [] };
   }
   const span = Math.floor((maxT - minT) / 86400000) + 1;
   const days = Math.min(maxDays, Math.max(7, span));
   const base = span > maxDays ? (Math.floor(maxT / 86400000) * 86400000 - (days - 1) * 86400000) : Math.floor(minT / 86400000) * 86400000;
   // executed-in: sessionId -> issues (sorted by sourceSpan.seqStart).
   const issuesBySession = new Map<string, typeof issues>()
-  for (const l of links) {
+  for (const l of storeLinks) {
     if (l.kind !== 'executed-in' || l.fromType !== 'issue' || l.toType !== 'session') continue;
     const issue = issues.find((i) => i.id === l.fromId)
     if (!issue) continue;
@@ -89,10 +94,21 @@ export async function buildCalendar(store: TrackStore, maxDays = 18): Promise<Ca
     // Session origin: subagent (delegated) > user (has a real user utterance) > auto (no user input — scheduled/background).
     const origin: CalOrigin = (g.header.origin === 'subagent' || (g.header.delegationDepth ?? 0) > 0) ? 'subagent' : (userMsgs.length > 0 ? 'user' : 'auto')
     const segIssues = issuesBySession.get(g.sessionId) ?? []
+    // Anchor points: prefer the issue's own sourceSpan.seqStart; when absent
+    // (legacy issues carry no span), distribute by ORDER — the k-th requirement
+    // of a session anchors at the k-th user message. This fixes the degenerate
+    // case where every requirement landed on the session's first day with the
+    // whole session's node count as its "events".
+    const anchors: number[] = segIssues.map((issue, k) => {
+      const own = issue.sourceSpan?.seqStart
+      if (typeof own === 'number' && own > 0) return own
+      const msg = userMsgs[k]
+      return msg?.citation.seqStart ?? (userMsgs[userMsgs.length - 1]?.citation.seqStart ?? 0)
+    })
     const bounds: Array<{ start: number; end: number }> = []
     for (let k = 0; k < segIssues.length; k++) {
-      const start = segIssues[k]!.sourceSpan?.seqStart ?? (userMsgs[k]?.citation.seqStart ?? 0)
-      const end = k + 1 < segIssues.length ? (segIssues[k + 1]!.sourceSpan?.seqStart ?? Number.MAX_SAFE_INTEGER) : Number.MAX_SAFE_INTEGER;
+      const start = anchors[k]!
+      const end = k + 1 < anchors.length ? anchors[k + 1]! : Number.MAX_SAFE_INTEGER;
       bounds.push({ start, end })
     }
     if (segIssues.length === 0 && userMsgs.length > 0) bounds.push({ start: userMsgs[0]!.citation.seqStart, end: Number.MAX_SAFE_INTEGER });
@@ -152,9 +168,39 @@ export async function buildCalendar(store: TrackStore, maxDays = 18): Promise<Ca
   }
   sessions.sort((a, b) => a.startDay - b.startDay);
   requirements.sort((a, b) => a.day - b.day);
+  // Cross-session edges between yarn nodes: session fork lineage (child -> parent)
+  // and issue derives (issue -> parent issue). Only pairs whose both endpoints are
+  // calendar requirements become visible links.
+  const reqById = new Map(requirements.map((r) => [r.id, r]))
+  const firstReqOfSession = new Map<string, string>()
+  for (const r of requirements) {
+    if (!firstReqOfSession.has(r.sessionId)) firstReqOfSession.set(r.sessionId, r.id)
+  }
+  const calLinks: CalLink[] = []
+  const seenLink = new Set<string>()
+  for (const g of graphs) {
+    if (!g.header.parentSession) continue
+    const from = firstReqOfSession.get(g.sessionId)
+    const to = firstReqOfSession.get(g.header.parentSession)
+    if (from === undefined || to === undefined || from === to) continue
+    if (!reqById.has(from) || !reqById.has(to)) continue
+    const key = from + '|' + to + '|forked-from'
+    if (seenLink.has(key)) continue
+    seenLink.add(key)
+    calLinks.push({ from, to, kind: 'forked-from' })
+  }
+  for (const i of issues) {
+    if (!i.parentId) continue
+    const from = i.id, to = i.parentId
+    if (!reqById.has(from) || !reqById.has(to)) continue
+    const key = from + '|' + to + '|derives'
+    if (seenLink.has(key)) continue
+    seenLink.add(key)
+    calLinks.push({ from, to, kind: 'derives' })
+  }
   return {
     days, dayBase: new Date(base).toISOString(),
     projects: projects.map((p) => ({ id: p.id, name: p.name, hue: hueFor(p.id) })),
-    sessions, requirements,
+    sessions, requirements, links: calLinks,
   }
 }

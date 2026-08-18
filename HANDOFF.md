@@ -1,18 +1,22 @@
-# HANDOFF — 会话结构图遵循 host conversation.view tab 规范（2026-08-17）
+# HANDOFF — 日历纱线数据修复（需求定位 + 跨会话关联 + 节点语义）（2026-08-18）
 
-## 问题（用户反馈）
-- 点 Chat/Trajectory tab 下划线高亮跟随激活 tab 走，但点「会话结构图」无状态变化
-- 根因：之前是 DOM hack（mountTab 手工 clone button + setGraphMode 隐藏 chat scrollBody + 网格覆盖），完全绕开 host 的 tab 状态机制
+## 用户反馈的三个问题
+1. 圆点大小意义不明确
+2. session 之间（源点之间）关联极少
+3. 8/9 dsh-track 一串大圆点叠在一起，不理解
 
-## 修复（遵循规范，非复刻样式）
-- 注册 conversation.view slot 条目（id: track-graph, label: 会话结构图），照 ui-trajectory 范式：
-  host 自动渲染 tab / 管理 aria-selected 与下划线 / actions.setView 切换 / 只挂载激活视图
-- 新增 src/client/graph-view.tsx（GraphView：fetch /api/track/calendar → CalendarYarnRoot，监听 track:graph-built）
-- index.ts：ctx.slots.inject('conversation.view', ...) 注册
-- right-panel.ts：删 mountTab/setGraphMode/graphview DOM 注入 + CSS（panel 保留）；构建按钮 dispatch track:graph-built
-- 分支 feat/native-view-tab @ 143ee21；PR #80；276/276 单测；client bundle 96.07kB 已 rsync 到 3080（硬刷新即生效）
+## 根因
+- 95/96 个 issue 无 sourceSpan（旧数据）→ bounds 退化为 (0, MAX) → 所有需求共用第一条用户消息的日期、events=整个 session 节点数（3000-4500）→ 大圆点全部叠在 session 开始那天
+- 跨 session 关联（forked-from 47 条 / derives 11 条）存在于 links 表但日历从未渲染
 
-## 验收
-1. 硬刷新 3080 → tab 条出现「会话结构图」，点击后下划线高亮跟随（与 Chat/Trajectory 一致）
-2. 会话切换时 tab 状态保持（host 管理）
-3. 右侧 Track 面板照常（FAB ◆ 打开）
+## 修复
+- calendar.ts：需求按序分摊到用户消息（第 k 个需求锚定第 k 条 user message，bounds=[msg[k].seq, msg[k+1].seq)）→ 每个需求落在自己触发的消息那天、events=该段真实工作量；输出 CalLink[]（forked-from 紫线 / derives 黄虚线，两端都是日历节点时可见）
+- calendar-yarn.tsx：渲染跨需求连线；radius 改为 log2 压缩（2.5..11px）；移除单需求会话无线门槛；图例更新「大小=该需求工作量」
+- 新增测试：无 sourceSpan 需求按消息分摊到不同天
+- 277/277 单测；client bundle 96.86kB
+
+## 重启后验收
+1. 重启 3080（host 改动 calendar.ts）
+2. 硬刷新 → 8/9 的一串大圆点消失（需求分布到各自消息的天）
+3. 出现紫线（子代理继承）与黄虚线（需求派生）
+4. 圆点大小差异合理（log 压缩）

@@ -59,12 +59,19 @@ export interface CalSession {
     nInstr: number;
     projects: string[];
 }
+export interface CalLink {
+    /** from requirement id -> to requirement id (both are yarn nodes). */
+    from: string;
+    to: string;
+    kind: 'forked-from' | 'derives';
+}
 export interface CalendarData {
     days: number;
     dayBase: string;
     projects: CalProject[];
     sessions: CalSession[];
     requirements: CalRequirement[];
+    links: CalLink[];
 }
 export declare const UNK_ID = "unk";
 export declare function hueFor(id: string): string;

@@ -60,4 +60,33 @@ describe('buildCalendar', () => {
     expect(cal.days).toBeLessThanOrEqual(18);
     expect(cal.projects.some((p) => p.id === projA)).toBe(true);
   })
+
+  it('distributes legacy requirements (no sourceSpan) over their user messages', async () => {
+    const projA = projectIdFor(CWD);
+    // Two requirements with NO sourceSpan: they must anchor at their OWN user
+    // message (k-th requirement -> k-th message), not all on the session start.
+    const ev2: SessionEvent[] = [
+      { type: 'turn/start', seq: 1, time: BASE, data: { turn: 1 } },
+      { type: 'user/message', seq: 2, time: BASE + 1000, data: { content: [{ type: 'text', text: '第一件事' }], source: { kind: 'user' }, id: 'm1' } },
+      { type: 'tool/call', seq: 3, time: BASE + 2000, data: { name: 'bash', callId: 'c1', arguments: '{}', turn: 1, step: 1 } },
+      { type: 'user/message', seq: 4, time: BASE + DAY + 1000, data: { content: [{ type: 'text', text: '第二件事' }], source: { kind: 'user' }, id: 'm2' } },
+    ] as unknown as SessionEvent[];
+    const hdr2: SessionHeader = { version: 0, id: 'c2', createdAt: BASE, cwd: CWD } as SessionHeader;
+    await store.upsertGraph(buildSessionGraph('c2', ev2, hdr2, BASE + DAY + 2000));
+    // Two issues, NO sourceSpan (legacy shape) — linked to c2, ordered by seqStart 0.
+    for (const [id, title, msg] of [['track_issue_c1', '第一件事', 'm1'], ['track_issue_c2', '第二件事', 'm2']] as const) {
+      await store.upsertIssue({ id, identifier: 'INV-' + id.slice(-1), title, description: '', priority: 2, state: 'todo' as const, teamId: 'INV', labels: [], linkedSessionIds: ['c2'], projectId: projA, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } as never);
+      await store.upsertLink({ id: 'track_link_' + id, fromType: 'issue', fromId: id, toType: 'session', toId: 'c2', kind: 'executed-in', createdAt: new Date().toISOString(), linkMethod: 'session-link' } as never);
+    }
+    const cal2 = await buildCalendar(store);
+    const sess2 = cal2.sessions.find((x) => x.id === 'c2');
+    expect(sess2?.nReq).toBe(2);
+    // The two requirements land on DIFFERENT days (own message anchor), and
+    // their events counts are the per-message spans, not the whole session.
+    const days = new Set(cal2.requirements.filter((r) => r.sessionId === 'c2').map((r) => r.day));
+    expect(days.size).toBe(2);
+    const r1 = cal2.requirements.find((r) => r.id === 'track_issue_c1');
+    const r2 = cal2.requirements.find((r) => r.id === 'track_issue_c2');
+    expect(r1?.day).not.toBe(r2?.day);
+  })
 });
