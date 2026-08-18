@@ -9,6 +9,7 @@ export declare const zh: {
     'strip.captures.one': string;
     'strip.empty': string;
     'strip.title': string;
+    'view.graph': string;
 };
 /** The track namespace key union. */
 export type TrackKey = keyof typeof zh;
@@ -19,6 +20,7 @@ export declare const en: {
     'strip.captures.one': string;
     'strip.empty': string;
     'strip.title': string;
+    'view.graph': string;
 };
 declare module '@deepseek-ai/dsh-client-ui-slots' {
     interface LocaleNamespaceMap {
