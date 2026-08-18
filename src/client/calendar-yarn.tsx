@@ -39,9 +39,11 @@ export interface CalSession {
   perDay: CalPerDay[]; segments: CalSegment[]; switches: number;
   nReq: number; nInstr: number; projects: string[];
 }
+export interface CalLink { from: string; to: string; kind: 'forked-from' | 'derives' }
 export interface CalData {
   days: number; dayBase: string; projects: CalProject[];
   sessions: CalSession[]; requirements: CalRequirement[];
+  links: CalLink[];
 }
 
 export interface CalJump { sessionId: string; messageId?: string }
@@ -69,21 +71,33 @@ function YarnView(props: {
   };
   const hueOf = (pid: string): string => (pid === 'unk' ? UNK_HUE : (data.projects.find((p) => p.id === pid)?.hue ?? '#999'));
   // Group requirements by (day, proj) to dodge overlaps.
-  const dodge = useMemo(() => {
-    const m: Record<string, number> = {};
+  // Cluster layout: same (day, proj) requirements fan out HORIZONTALLY around
+  // the day's center (largest first, at the middle) with a small vertical tier
+  // so a busy day reads as a fan, not a vertical stack. xOffset applied in px();
+  // yOffset is the small tier (±step by rank).
+  const cluster = useMemo(() => {
+    const byKey = new Map<string, CalRequirement[]>();
     for (const r of data.requirements) {
       const key = r.day + '|' + r.proj;
-      m[key] = (m[key] ?? 0) + 1;
+      const list = byKey.get(key) ?? [];
+      list.push(r);
+      byKey.set(key, list);
     }
-    const off: Record<string, number> = {};
-    const seen: Record<string, number> = {};
-    for (const r of data.requirements) {
-      const key = r.day + '|' + r.proj;
-      const k = seen[key] ?? 0;
-      seen[key] = k + 1;
-      off[r.id] = (k - (m[key]! - 1) / 2) * 18;
+    const xo: Record<string, number> = {};
+    const yo: Record<string, number> = {};
+    for (const list of byKey.values()) {
+      const sorted = [...list].sort((a, b) => b.events - a.events);
+      const n = sorted.length;
+      sorted.forEach((r, k) => {
+        // center-out horizontal: ranks 0,1,2... map to 0,-1,+1,-2,+2...
+        const side = k % 2 === 0 ? 1 : -1;
+        const pos = Math.ceil(k / 2);
+        const gap = Math.max(5, Math.min(10, 30 / Math.max(1, n)));
+        xo[r.id] = side * pos * gap;
+        yo[r.id] = (k - (n - 1) / 2) * 9;
+      });
     }
-    return off;
+    return { xo, yo };
   }, [data]);
   const W = data.days * DAY_W + 20;
   const H = TOPH + lanes.length * LANE_H + 16;
@@ -99,8 +113,9 @@ function YarnView(props: {
     for (const list of bySession.values()) list.sort((a, b) => a.day - b.day || a.events - b.events);
     return bySession;
   }, [data]);
-  const px = (r: CalRequirement): number => r.day * DAY_W + DAY_W / 2 + ((r.sessionId.length * 7) % 11) - 5;
-  const py = (r: CalRequirement): number => laneY(r.proj) + (dodge[r.id] ?? 0);
+  const reqMap = useMemo(() => new Map(data.requirements.map((r) => [r.id, r])), [data]);
+  const px = (r: CalRequirement): number => r.day * DAY_W + DAY_W / 2 + (cluster.xo[r.id] ?? 0) + ((r.sessionId.length * 7) % 7) - 3;
+  const py = (r: CalRequirement): number => laneY(r.proj) + (cluster.yo[r.id] ?? 0);
   return (
     <div style={{ display: 'flex', height: '100%', minHeight: 0 }}>
       <div style={{ width: 104, flexShrink: 0, position: 'relative', borderRight: '1px solid ' + T.line }}>
@@ -119,9 +134,21 @@ function YarnView(props: {
               <text x={d * DAY_W + DAY_W / 2} y={16} textAnchor='middle' fill={T.faint} fontSize={9} fontFamily={T.mono}>{dayLabelOf(base, d)}</text>
             </g>
           ))}
+          {(data.links ?? []).map((l, k) => {
+            const a = reqMap.get(l.from);
+            const b = reqMap.get(l.to);
+            if (a === undefined || b === undefined) return null;
+            const dim = focus !== null && focus !== a.sessionId && focus !== b.sessionId;
+            const color = l.kind === 'forked-from' ? '#C77DDF' : '#E3A63B';
+            const dashed = l.kind === 'derives';
+            return (
+              <path key={'l' + k} d={'M ' + px(a) + ' ' + py(a) + ' L ' + px(b) + ' ' + py(b)}
+                fill='none' stroke={color} strokeWidth={1} strokeDasharray={dashed ? '3 3' : 'none'}
+                opacity={dim ? 0.12 : 0.65} />
+            );
+          })}
           {[...threads.entries()].map(([sid, reqs]) => {
             const dimmed = focus !== null && focus !== sid;
-            if (reqs.length < 2) return null;
             const pts = reqs.map((r) => ({ x: px(r), y: py(r) }));
             return (
               <path key={'t' + sid} d={pts.map((p, k) => (k === 0 ? 'M ' + p.x + ' ' + p.y : ' L ' + p.x + ' ' + p.y)).join(' ')}
@@ -130,7 +157,7 @@ function YarnView(props: {
           })}
           {data.requirements.map((r) => {
             const dimmed = focus !== null && focus !== r.sessionId;
-            const radius = 4 + Math.sqrt(r.events) / 2.2;
+            const radius = 2.5 + Math.min(8.5, Math.log2(1 + r.events) * 1.1);
             const sess = data.sessions.find((s) => s.id === r.sessionId);
             const tangled = sess !== undefined && sess.projects.length > 1;
             return (
@@ -327,7 +354,7 @@ export function CalendarYarnRoot(props: CalProps) {
           <div style={{ fontFamily: T.mono, fontSize: 14, letterSpacing: 1 }}>dsh-track<span style={{ color: T.faint }}> / </span><span style={{ color: T.muted }}>日历纱线</span></div>
           <div style={{ fontFamily: T.mono, fontSize: 10.5, color: T.muted }}>{list.length} sessions · <span style={{ color: GOLD }}>{tangled.length} 缠绕</span> · 需求 {totReq} · 指示 {totIns}</div>
           <div style={{ fontFamily: T.mono, fontSize: 10, color: T.faint }}>用户 {data.sessions.filter((s) => s.origin === 'user').length} · 子代理 {data.sessions.filter((s) => s.origin === 'subagent').length} · 自动 {data.sessions.filter((s) => s.origin === 'auto').length}</div>
-          <div style={{ marginLeft: 'auto', fontFamily: T.mono, fontSize: 9.5, color: T.faint }}>节点=需求(大小=事件量) · 虚线=会话线 · 金环=缠绕 · 切换按工作段计</div>
+          <div style={{ marginLeft: 'auto', fontFamily: T.mono, fontSize: 9.5, color: T.faint }}>节点=需求(大小=该需求工作量,即其触发的会话事件数) · 紫线=子代理继承 · 黄虚线=需求派生 · 金环=跨项目缠绕</div>
         </div>
         <div style={{ display: 'flex', gap: 6, margin: '10px 0', flexWrap: 'wrap' }}>
           {(['user', 'subagent', 'auto'] as CalOrigin[]).map((o) => {

@@ -59,12 +59,18 @@ export interface CalSession {
     nInstr: number;
     projects: string[];
 }
+export interface CalLink {
+    from: string;
+    to: string;
+    kind: 'forked-from' | 'derives';
+}
 export interface CalData {
     days: number;
     dayBase: string;
     projects: CalProject[];
     sessions: CalSession[];
     requirements: CalRequirement[];
+    links: CalLink[];
 }
 export interface CalJump {
     sessionId: string;
