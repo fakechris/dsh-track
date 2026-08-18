@@ -1,24 +1,20 @@
-# HANDOFF — 需求级项目归属修复（attributeIssuesBySpan）（2026-08-18）
+# HANDOFF — 日历纱线按修正版重构（2026-08-18）
 
-## 背景（用户用修正版 HTML 指出）
-- 19 条会话线里需求跨项目 = 0，但 36 个 session tool 层触碰 2-4 仓库
-- 结论：抽取缺陷——issue.projectId 全绑 session 首个 repo（projects.ts repos[0]），需求级归属没做
+## 用户反馈
+效果差的原因不在数据，而在可视化按 mock 均匀分布假设设计；真实数据是幂律的。
 
-## 修复
-- repos.ts：新增 reposOfEventsInRange(events, start, end)——需求 span 窗口内触碰的仓库
-- projects.ts：新增 attributeIssuesBySpan——issue 的 projectId = 它自己 span 窗口触碰的仓库；旧 issue 无 span 时按「该 session 下第 k 个需求」锚定第 k 条 user message 构造 span
-- index.ts link-all：graph 构建后先跑 attributeIssuesBySpan（读事件），再 induceProjects
-- 299/299 单测
+## 已按 /Users/chris/Downloads/track-calendar-fixed.html 重构 YarnView
+- 泳道按事件量降序 + 零活动仓库折叠「其他 ×N」+ 未归属最后
+- 列宽/行高自适应铺满（ResizeObserver）
+- 格内贪心螺旋装填（pack 零重叠）
+- 同 session 需求串贝塞尔灰线 + 跨泳道金色菱形
+- 删节点金环 + 「只看缠绕线」线级过滤 + 顶部统计
+- 点节点/线 → SegmentDrawer（◆需求 ▷指示 ✓⊘✕）
 
-## v4 修复
-- repoTouch 存进 graph.header（构建时算好 seq→repo 索引），attributeIssuesBySpan 直接查表，不再 readSession（性能从超时→秒级）
-- GRAPH_VERSION 6 强制全量重建
+## 数据调查（前一 commit 6653368）
+- 需求层跨项目 = 0 是真实事实（dsh-track 主会话前 14 需求全在 dsh-track，后段才碰 test-fakechris）；归属修复让数据更准（attributed 5），不伪造跨项目
 
-## v3 优化
-- buildRepoTouchIndex + reposInRange 二分索引：每 session 一次构建，需求 span 二分查表（不再每 issue 全事件扫描）
-- attributeIssuesBySpan 只处理多 repo session（单 repo 跳过），按 session 缓存事件，每 session 只读一次日志
-
-## 重启后验收
-1. 重启 3080（host 改动）
-2. POST /api/track/graph/link-all {} → attributed > 0
-3. GET /api/track/calendar → 需求层跨项目 > 0（同一 session 的需求分属不同仓库）
+## 验收
+1. 硬刷新 3080 → 泳道按事件量排、空仓折叠、节点零重叠、会话灰线 + 金色菱形切换点
+2. 顶部统计显示缠绕线数；「只看缠绕线」过滤
+3. 点节点/线 → 底部抽屉段序列
