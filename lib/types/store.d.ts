@@ -77,7 +77,9 @@ export declare class TrackStore {
     writeGlobal(g: TrackGlobal): Promise<void>;
     /** Mint the next Linear-style identifier, e.g. `INV-12`. */
     nextIdentifier(teamKey?: string): Promise<string>;
-    listCaptures(status?: Capture['status']): Promise<Capture[]>;
+    listCaptures(status?: Capture['status'], opts?: {
+        includeDeleted?: boolean;
+    }): Promise<Capture[]>;
     upsertCapture(capture: Capture): Promise<void>;
     /**
      * Find an open capture whose normalized content matches `content` — the
@@ -118,7 +120,17 @@ export declare class TrackStore {
         dedupeRequirementBySession?: boolean;
     }): Promise<CaptureCreateResult>;
     getCapture(id: string): Promise<Capture | undefined>;
-    deleteCapture(id: string): Promise<void>;
+    /**
+     * Soft-delete a capture (2026-08-18): marks `deletedAt`, never removes the
+     * row — deletion is a strong user negation and the record must stay
+     * complete and queryable. Default listings hide tombstones.
+     */
+    deleteCapture(id: string, opts?: {
+        by?: 'user' | 'agent' | 'auto';
+        reason?: string;
+    }): Promise<Capture | undefined>;
+    /** Hard-delete a capture record (tests / storage cleanup — NOT the user path). */
+    purgeCapture(id: string): Promise<void>;
     /**
      * Promote an open capture into a real issue: mint the issue from the
      * capture content and flip the capture to `promoted` with the issue id
@@ -135,10 +147,27 @@ export declare class TrackStore {
      * @param sessionId  only decisions raised in this session
      */
     listDecisions(state?: Decision['status'], since?: number, sessionId?: string): Promise<Decision[]>;
-    listIssues(teamId?: string, state?: Issue['state']): Promise<Issue[]>;
+    listIssues(teamId?: string, state?: Issue['state'], opts?: {
+        includeDeleted?: boolean;
+    }): Promise<Issue[]>;
     getIssue(id: string): Promise<Issue | undefined>;
     upsertIssue(issue: Issue): Promise<void>;
-    deleteIssue(id: string): Promise<void>;
+    /**
+     * Soft-delete an issue (2026-08-18): marks `deletedAt`/`deletedBy`/
+     * `deletedReason`, records the strong-negation `user-delete` evidence into
+     * the issue's ledger, clears any pending confirmation, and appends an
+     * audit entry. The row is NEVER removed by the user path — the identifier
+     * stays durable and the full record (title, description, evidence, links)
+     * remains queryable via includeDeleted. Default listings hide tombstones.
+     * @returns the tombstoned issue, or undefined when not found.
+     */
+    deleteIssue(id: string, opts?: {
+        by?: Issue['deletedBy'];
+        reason?: string;
+        sessionId?: string;
+    }): Promise<Issue | undefined>;
+    /** Hard-delete an issue record (tests / storage cleanup — NOT the user path). */
+    purgeIssue(id: string): Promise<void>;
     /** Resolve an issue by its store id OR Linear-style identifier (INV-12). */
     getIssueByInput(input: string): Promise<Issue | undefined>;
     /**
@@ -148,6 +177,14 @@ export declare class TrackStore {
      * one issue at a time.
      */
     attachSession(issueId: string, sessionId: string): Promise<Issue | undefined>;
+    /**
+     * Apply one evidence signal to an issue in memory: re-evaluate the state
+     * machine, write `inferred`, bump `lastProgressAt` on positive signals,
+     * auto-commit only the safe todo → in_progress transition, and surface
+     * confirmation-gated proposals (done/canceled) as `pendingConfirm`.
+     * Shared by the single-signal path and the batch path (one loadAll).
+     */
+    private applyEvidenceToIssue;
     /**
      * Record one evidence signal against an issue, re-evaluate the state
      * machine, and apply the result: write `inferred`, update `lastProgressAt`
@@ -162,6 +199,16 @@ export declare class TrackStore {
             reason: string;
         };
     } | null>;
+    /**
+     * Record many evidence signals with ONE store load — the batch face for
+     * scan pipelines (track_git_artifacts) that fire signals for many issues.
+     * Each issue is loaded once, updated in memory, and written once; signals
+     * for the same issue are applied in order.
+     */
+    recordIssueEvidenceMany(items: Array<{
+        issueId: string;
+        signal: EvidenceRef;
+    }>, now?: number): Promise<number>;
     /**
      * Commit a state change on explicit confirmation (user nod / panel / a
      * confirmed_by_user tool call). Writes `state` and records the confirmed

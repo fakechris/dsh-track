@@ -19,7 +19,7 @@ import type { KvFacet } from '@deepseek-ai/dsh-storage'
 // Type-only: pulls the ctx.webServer Context merge from dsh-host-webserver.
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { TrackStore, makeId } from './store.ts'
-import type { Capture, Decision, EvidenceRef, Issue, IssueState, LlmUsageRecord, TrackConfig } from './types.ts'
+import type { Capture, Decision, EvidenceRef, Issue, IssueState, Link, LlmUsageRecord, TrackConfig } from './types.ts'
 import { runSync } from './sync/run.ts'
 import { createAutoCapture, type CaptureSignalsConfig } from './capture/observe.ts'
 import { backfillCaptureContext } from './capture/backfill.ts'
@@ -1039,9 +1039,31 @@ export function apply(ctx: Context, config?: Config) {
       if (req.method === 'GET') { json(res, { captures: await store.listCaptures() }); return }
       json(res, { error: 'method not allowed' }, 405)
     })
-    registerRoute('/issues', async (_req, res) => {
+    registerRoute('/issues', async (req, res) => {
       await ensureStoreOpen()
-      json(res, { issues: await store.listIssues() })
+      const url = new URL(req.url ?? '/', 'http://x')
+      const includeDeleted = url.searchParams.get('includeDeleted') === '1'
+      const issues = await store.listIssues(undefined, undefined, { includeDeleted })
+      // P0 (Output-first): annotate each issue with its best commit evidence
+      // so the panel can mark done-without-commit work instead of hiding it.
+      if (!includeDeleted) {
+        const links = await store.listLinks()
+        const implByIssue = new Map<string, { best: Link['evidenceKind'] | undefined; confidence: number; count: number }>()
+        for (const l of links) {
+          if (l.kind !== 'implements') continue
+          const cur = implByIssue.get(l.fromId) ?? { best: undefined, confidence: 0, count: 0 }
+          cur.count += 1
+          const conf = l.confidence ?? 0
+          if (conf > cur.confidence) { cur.confidence = conf; cur.best = l.evidenceKind ?? 'candidate' }
+          implByIssue.set(l.fromId, cur)
+        }
+        const annotated = issues.map((i) => {
+          const ev = implByIssue.get(i.id)
+          return ev !== undefined ? { ...i, commitEvidence: ev } : { ...i, commitEvidence: null }
+        })
+        json(res, { issues: annotated }); return
+      }
+      json(res, { issues }); return
     })
     registerRoute('/funnel', async (_req, res) => {
       await ensureStoreOpen()
@@ -1129,7 +1151,11 @@ export function apply(ctx: Context, config?: Config) {
       const id = idFromUrl(req, '/api/track/captures')
       if (id === null) { json(res, { error: 'capture id required' }, 400); return }
       if (req.method === 'DELETE') {
-        await store.deleteCapture(id)
+        const body = await readBody(req).catch((): Record<string, unknown> => ({}))
+        await store.deleteCapture(id, {
+          by: 'user',
+          reason: typeof body.reason === 'string' && body.reason !== '' ? body.reason.slice(0, 200) : undefined,
+        })
         json(res, { ok: true }); return
       }
       if (req.method === 'POST' && new URL(req.url ?? '/', 'http://x').pathname.endsWith('/promote')) {
@@ -1194,8 +1220,16 @@ export function apply(ctx: Context, config?: Config) {
         json(res, { ok: true, canonical: { id: merged?.id ?? canonical.id, identifier: merged?.identifier ?? canonical.identifier, state: merged?.state ?? canonical.state } }); return
       }
       if (req.method === 'DELETE') {
-        await store.deleteIssue(id)
-        json(res, { ok: true }); return
+        // Soft delete (2026-08-18): the row is tombstoned, the `user-delete`
+        // negation is recorded in the issue's ledger, and an audit entry is
+        // appended — deletion never removes the record. Optional `reason`
+        // body carries the user's stated reason.
+        const body = await readBody(req).catch((): Record<string, unknown> => ({}))
+        const deleted = await store.deleteIssue(id, {
+          by: 'user',
+          reason: typeof body.reason === 'string' && body.reason !== '' ? body.reason.slice(0, 200) : undefined,
+        })
+        json(res, { ok: true, deleted: deleted !== undefined }); return
       }
       json(res, { error: 'method not allowed' }, 405)
     })

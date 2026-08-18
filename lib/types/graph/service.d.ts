@@ -68,6 +68,9 @@ export interface GraphViewEdge {
     from: string;
     to: string;
     kind: string;
+    /** Evidence strength of landed-in/implements edges (P1) — absent on legacy. */
+    evidenceKind?: 'declared' | 'observed' | 'candidate' | 'unmapped';
+    confidence?: number;
 }
 export interface GraphViewData {
     nodes: GraphViewNode[];

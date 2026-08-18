@@ -177,7 +177,8 @@ function jumpScrollIntoView(row: HTMLElement): void {
 
 interface Snapshot {
   captures: Capture[]
-  issues: Issue[]
+  /** GET /issues annotates each issue with its best commit evidence (P0). */
+  issues: Array<Issue & { commitEvidence?: { best?: string; confidence?: number; count: number } | null }>
 }
 
 const EMPTY: Snapshot = { captures: [], issues: [] }
@@ -467,6 +468,8 @@ const PANEL_CSS = `
 }
 #${PANEL_ID} .inv-act.inv-done { color: #1a7f37; border-color: rgba(46,160,67,.4); }
 #${PANEL_ID} .inv-act.inv-done:hover { background: rgba(46,160,67,.1); }
+#${PANEL_ID} .inv-commit-badge { font-size: 10px; padding: 0 5px; border-radius: 8px; border: 1px solid rgba(210,153,34,.5); color: #b8860b; white-space: nowrap; }
+#${PANEL_ID} .inv-commit-badge.inv-commit-missing { border-color: rgba(190,60,40,.5); color: #be3c28; }
 #${PANEL_ID} .inv-empty { opacity: .5; font-size: 12px; font-style: italic; }
 #${PANEL_ID} .inv-lineage { border-top: 1px dashed var(--dsw-alias-border-l1, rgba(0,0,0,.1)); padding: 6px 9px; display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
 #${PANEL_ID} .inv-lineage[hidden] { display: none; }
@@ -474,6 +477,8 @@ const PANEL_CSS = `
 #${PANEL_ID} .inv-lg-group { font-size: 10.5px; font-weight: 600; text-transform: uppercase; opacity: .55; margin-top: 5px; }
 #${PANEL_ID} .inv-lg-row { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #${PANEL_ID} .inv-lg-msg { padding-left: 12px; color: var(--dsw-alias-label-secondary, #555); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#${PANEL_ID} .inv-lg-ev-strong { font-size: 10px; color: #1a7f37; border: 1px solid rgba(26,127,55,.4); border-radius: 8px; padding: 0 4px; }
+#${PANEL_ID} .inv-lg-ev-weak { font-size: 10px; color: #b8860b; border: 1px dashed rgba(210,153,34,.5); border-radius: 8px; padding: 0 4px; }
 #${PANEL_ID} .inv-related { border-top: 1px dashed var(--dsw-alias-border-l1, rgba(0,0,0,.1)); padding: 6px 10px; font-size: 12px; }
 #${PANEL_ID} .gv-svg { display: block; }
 #${PANEL_ID} .gv-edge { stroke: rgba(0,0,0,.15); stroke-width: 1; }
@@ -482,6 +487,16 @@ const PANEL_CSS = `
 #${PANEL_ID} .gv-implements { stroke: rgba(26,127,55,.6); }
 #${PANEL_ID} .gv-forked-from { stroke: rgba(76,141,255,.5); }
 #${PANEL_ID} .gv-raised-in { stroke: rgba(232,133,60,.4); }
+/* P1 evidence strength on landed-in / implements edges — weak evidence is
+   never rendered like strong evidence. Legacy links (no evidenceKind) fall
+   back to the candidate style. */
+#${PANEL_ID} .gv-ev-declared { stroke: rgba(26,127,55,.95); stroke-width: 1.7; stroke-dasharray: none; }
+#${PANEL_ID} .gv-ev-observed { stroke: rgba(46,160,67,.8); stroke-width: 1.4; stroke-dasharray: none; }
+#${PANEL_ID} .gv-ev-candidate { stroke: rgba(210,153,34,.85); stroke-width: 1.2; stroke-dasharray: 3 2; }
+#${PANEL_ID} .gv-ev-unmapped { stroke: rgba(138,143,152,.7); stroke-width: 1; stroke-dasharray: 1 3; }
+#${PANEL_ID} .gv-ev-sample { width: 14px !important; height: 0 !important; border-radius: 0 !important; border-top: 2px solid; }
+#${PANEL_ID} .gv-ev-sample.gv-ev-declared { border-color: rgba(26,127,55,.95); }
+#${PANEL_ID} .gv-ev-sample.gv-ev-candidate { border-color: rgba(210,153,34,.85); border-top-style: dashed; }
 #${PANEL_ID} .gv-node { cursor: default; }
 #${PANEL_ID} .gv-node.gv-click { cursor: pointer; }
 #${PANEL_ID} .gv-node.gv-click:hover circle { stroke: #333; stroke-width: 2; }
@@ -737,13 +752,22 @@ function renderCaptureCard(c: Capture): string {
 }
 
 /** One issue card: header row (badge + title + expand) + optional detail body. */
-function renderIssueCard(i: Issue): string {
+function renderIssueCard(i: Issue & { commitEvidence?: Snapshot['issues'][number]['commitEvidence'] }): string {
   const expanded = expandedIssueId === i.id
   const isConfirmingDelete = confirmIssueDeleteId === i.id
   const sessionId = i.attachSessionId ?? i.linkedSessionIds[0]
   const jump = sessionId
     ? `<button class="inv-act inv-jump" data-jump-session="${escapeHtml(sessionId)}" data-jump-message="${escapeHtml(i.promptMessageId ?? '')}" title="跳回对话中的这条 prompt">↩ 对话</button>`
     : ''
+  // P0 (Output-first): done work with no observed commit evidence is flagged,
+  // and candidate-only (heuristic) links are labeled instead of passing for
+  // real provenance.
+  const commitEvidence = i.commitEvidence
+  const commitBadge = i.state === 'done' && (commitEvidence === null || commitEvidence === undefined)
+    ? '<span class="inv-commit-badge inv-commit-missing" title="已标记完成但没有落地 commit 证据">⚠ 无落地</span>'
+    : commitEvidence !== null && commitEvidence !== undefined && commitEvidence.best === 'candidate'
+      ? '<span class="inv-commit-badge" title="仅有启发式 commit 关联（时间窗口/标题相似），非声明证据">≈ 弱证据</span>'
+      : ''
   const terminal = i.state === 'done' || i.state === 'canceled'
   const sel = batchMode && !terminal
     ? `<input class="inv-sel" type="checkbox" data-issue-sel="${i.id}" ${batchSelected.has(i.id) ? 'checked' : ''} title="选择此任务（批量）">`
@@ -775,6 +799,7 @@ function renderIssueCard(i: Issue): string {
         `<span class="inv-issue-id">${sel}${escapeHtml(i.identifier)}</span>` +
         `<span class="inv-state inv-state-${i.state}">${i.state}</span>` +
         `${i.pendingConfirm ? `<span class="inv-state inv-state-pending">待确认</span>` : ''}` +
+        `${commitBadge}` +
         `<span class="inv-issue-title">${escapeHtml(i.title)}</span>` +
         `<span class="inv-chevron">${expanded ? '▾' : '▸'}</span>` +
       `</div>` +
@@ -817,7 +842,7 @@ interface LineageViewLite {
   target: { id: string; kind: string; title: string; state?: string; origin?: string }
   neighbors: Record<string, { id: string; kind: string; title: string; meta?: Record<string, string | undefined> }>
   evidence: Array<{ sessionId: string; seqStart: number; seqEnd: number; kind: string; promptMessageId?: string; userMessages: Array<{ messageId?: string; title: string; seqStart: number; seqEnd: number }> }>
-  commits: Array<{ id: string; sha: string; subject: string; authorAt: number }>
+  commits: Array<{ id: string; sha: string; subject: string; authorAt: number; evidenceKind?: string; confidence?: number }>
   edges: Array<{ kind: string; fromId: string; toId: string; linkMethod?: string; direction: 'out' | 'in' }>
 }
 
@@ -860,8 +885,12 @@ function renderLineageHtml(view: LineageViewLite, issueId: string): string {
   }
   if (view.commits.length > 0) {
     parts.push('<div class="inv-lg-group">代码落地（commit）</div>')
+    const evLabel: Record<string, string> = { declared: '声明', observed: '观测', candidate: '启发', unmapped: '未归属' }
     for (const c of view.commits) {
-      parts.push('<div class="inv-lg-row">' + escapeHtml(c.sha.slice(0, 10)) + ' · ' + escapeHtml(c.subject.slice(0, 60)) + ' · ' + new Date(c.authorAt).toLocaleDateString() + '</div>')
+      const ev = evLabel[c.evidenceKind ?? 'candidate'] ?? '启发'
+      const evCls = ['declared', 'observed'].includes(c.evidenceKind ?? '') ? 'inv-lg-ev-strong' : 'inv-lg-ev-weak'
+      parts.push('<div class="inv-lg-row">' + escapeHtml(c.sha.slice(0, 10)) + ' · ' + escapeHtml(c.subject.slice(0, 60)) + ' · ' + new Date(c.authorAt).toLocaleDateString()
+        + '<span class="' + evCls + '" title="证据强度：' + ev + '（' + (c.evidenceKind ?? 'candidate') + '）">' + ev + '</span></div>')
     }
   }
   if (parts.length === 1) parts.push('<div class="inv-empty">暂无谱系数据</div>')
@@ -872,7 +901,7 @@ function renderLineageHtml(view: LineageViewLite, issueId: string): string {
 /** ---- visual project graph (force-directed SVG, no deps) ---- */
 
 interface GVNodeLite { id: string; kind: string; label: string; sessionId?: string; messageId?: string; state?: string }
-interface GVEdgeLite { from: string; to: string; kind: string }
+interface GVEdgeLite { from: string; to: string; kind: string; evidenceKind?: string; confidence?: number }
 interface GVDataLite { nodes: GVNodeLite[]; edges: GVEdgeLite[] }
 
 const GV_COLOR: Record<string, string> = { session: '#4c8dff', issue: '#1a7f37', commit: '#8a8f98', decision: '#e8853c' }
@@ -916,10 +945,18 @@ function renderGraphSvg(container: HTMLElement, view: GVDataLite): void {
   const w = container.clientWidth || 900
   const h = container.clientHeight || 600
   const pos = forceLayout(view.nodes, view.edges, w, h)
+  const evCls = (e: GVEdgeLite): string => {
+    const kind = e.evidenceKind ?? (e.kind === 'landed-in' || e.kind === 'implements' ? 'candidate' : '')
+    // Only landed-in/implements edges carry evidence strength; other kinds
+    // keep their base style. Sanitize against arbitrary link kinds.
+    return (e.kind === 'landed-in' || e.kind === 'implements') && ['declared', 'observed', 'candidate', 'unmapped'].includes(kind)
+      ? ' gv-ev-' + kind
+      : ''
+  }
   const edgeLines = view.edges.map((e) => {
     const a = pos.get(e.from), b = pos.get(e.to)
     if (!a || !b) return ''
-    return '<line x1="' + a.x.toFixed(1) + '" y1="' + a.y.toFixed(1) + '" x2="' + b.x.toFixed(1) + '" y2="' + b.y.toFixed(1) + '" class="gv-edge gv-' + e.kind + '"/>'
+    return '<line x1="' + a.x.toFixed(1) + '" y1="' + a.y.toFixed(1) + '" x2="' + b.x.toFixed(1) + '" y2="' + b.y.toFixed(1) + '" class="gv-edge gv-' + e.kind + evCls(e) + '"/>'
   }).join('')
   const circles = view.nodes.map((n) => {
     const p = pos.get(n.id)
@@ -935,10 +972,14 @@ function renderGraphSvg(container: HTMLElement, view: GVDataLite): void {
     const key = ['session', 'issue', 'commit', 'decision'][i]!;
     return '<span class="gv-legend"><i style="background:' + GV_COLOR[key] + '"></i>' + t + '</span>'
   }).join('')
+  // P1 evidence legend: landed-in / implements edges carry declared (实线实心)
+  // vs candidate (虚线琥珀) — weak evidence is never shown as strong.
+  const evLegend = '<span class="gv-legend"><i class="gv-ev-sample gv-ev-declared"></i>声明</span>'
+    + '<span class="gv-legend"><i class="gv-ev-sample gv-ev-candidate"></i>启发</span>'
   container.innerHTML = '<svg class="gv-svg" width="100%" height="100%" viewBox="0 0 ' + w + ' ' + h + '">'
     + '<rect width="100%" height="100%" fill="transparent"/>' + edgeLines + circles + '</svg>'
-    + '<div class="gv-legend-bar">' + legend + '</div>'
-    + '<div class="gv-hint">点击 会话/需求 节点跳转到对话</div>'
+    + '<div class="gv-legend-bar">' + legend + evLegend + '</div>'
+    + '<div class="gv-hint">点击 会话/需求 节点跳转到对话 · 实线=声明证据 虚线=启发式关联</div>'
   container.onclick = (ev: MouseEvent): void => {
     const g = (ev.target as Element).closest<HTMLElement>('[data-gn]')
     if (g === null) return
