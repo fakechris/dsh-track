@@ -40,6 +40,33 @@ export declare function repoRefOf(path: string): RepoRef | undefined;
  */
 export declare function pathsOfEvent(data: unknown): string[];
 /**
+ * Repos touched by tool calls in a seq window [start, end). Requirement-level
+ * project attribution: an issue's span (sourceSpan.seqStart..seqEnd) resolves
+ * to the repo the work in that window actually touched — not the session's
+ * first repo. Falls back to all-session repos when the window is empty.
+ */
+export declare function reposOfEventsInRange(events: readonly {
+    type?: unknown;
+    seq?: unknown;
+    data?: unknown;
+}[], start: number, end: number): RepoRef[];
+/**
+ * Sorted tool-call seq -> repos-touched index for a session. Build once per
+ * session; requirement spans binary-search into it instead of rescanning all
+ * events per issue (the attribution hot path).
+ */
+export interface RepoTouchIndex {
+    seq: number;
+    repos: RepoRef[];
+}
+export declare function buildRepoTouchIndex(events: readonly {
+    type?: unknown;
+    seq?: unknown;
+    data?: unknown;
+}[]): RepoTouchIndex[];
+/** First repos touched at or after `start` (binary search), up to `end`. */
+export declare function reposInRange(idx: RepoTouchIndex[], start: number, end: number): RepoRef[];
+/**
  * Repos touched by one session's events, in first-seen order (deduped).
  * Deterministic for a given log + filesystem.
  */

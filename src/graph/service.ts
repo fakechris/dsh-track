@@ -9,7 +9,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionQueryEngine } from '@deepseek-ai/dsh-session-query'
 import type { SessionGraph } from '../types.ts'
 import { buildSessionGraph, GRAPH_VERSION } from './build.ts'
-import { reposOfEvents } from './repos.ts'
+import { reposOfEvents, buildRepoTouchIndex } from './repos.ts'
 import type { TrackStore } from '../store.ts'
 
 /** What the graph service needs from the harness + store. */
@@ -50,6 +50,9 @@ export async function ensureSessionGraph(
   }
   const graph = buildSessionGraph(sessionId, snap.events, snap.session, now)
   graph.header.repos = reposOfEvents(snap.events)
+  // Requirement-level attribution index: first repo touched at/after each seq.
+  graph.header.repoTouch = buildRepoTouchIndex(snap.events)
+    .map((x) => ({ seq: x.seq, url: x.repos[0]!.url }))
   await deps.store.upsertGraph(graph)
   await deps.store.markGraphBuilt(sessionId)
   return graph
@@ -78,6 +81,8 @@ export async function buildWorkspaceGraphs(
       }
       const graph = buildSessionGraph(rec.header.id, snap.events, snap.session, now)
       graph.header.repos = reposOfEvents(snap.events)
+      graph.header.repoTouch = buildRepoTouchIndex(snap.events)
+        .map((x) => ({ seq: x.seq, url: x.repos[0]!.url }))
       await deps.store.upsertGraph(graph)
       await deps.store.markGraphBuilt(rec.header.id)
       result.built += 1

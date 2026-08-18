@@ -32,7 +32,7 @@ import type { SyncOptions, SyncReport, SyncDeps as SyncReportDeps } from './sync
 import { ensureSessionGraph, buildWorkspaceGraphs, type GraphServiceDeps } from './graph/service.ts'
 import { renderGraphSummary, renderGraphText } from './graph/render.ts'
 import { writeSemanticLinks, type LinkPassResult } from './graph/links.ts'
-import { induceProjects, type ProjectInductionResult } from './graph/projects.ts'
+import { induceProjects, attributeIssuesBySpan, type ProjectInductionResult } from './graph/projects.ts'
 import { scanProjectCommits, type CommitScanResult } from './graph/commits.ts'
 import { buildLineage } from './graph/lineage.ts'
 import { relatedSessions, projectGraphView } from './graph/service.ts'
@@ -1363,8 +1363,16 @@ export function apply(ctx: Context, config?: Config) {
         graphs = totals
       }
       const links = await writeSemanticLinks(store, dryRun)
+      // Requirement-level project attribution: an issue belongs to the repo its
+      // own span's work touched, not the session's first repo. Needs events.
+      let attributed = 0
+      if (!dryRun) {
+        try {
+          attributed = await attributeIssuesBySpan(store, false)
+        } catch { /* attribution is best-effort */ }
+      }
       const projects = await induceProjects(store, dryRun)
-      json(res, { ok: true, dryRun, graphs, links, projects })
+      json(res, { ok: true, dryRun, graphs, links, projects, attributed })
     })
     // GET /api/track/projects — inducted projects (project dimension).
     registerRoute('/projects', async (_req, res) => {

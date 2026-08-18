@@ -360,6 +360,8 @@ export interface SessionGraph {
     createdAt: number
     /** Repos this session's tool calls touched (repo-touch project induction). */
     repos?: Array<{ url: string; root: string; name: string }>
+    /** Sorted tool-call seq -> repo url index (requirement-level attribution). */
+    repoTouch?: Array<{ seq: number; url: string }>
   }
   nodes: GraphNode[]
   edges: GraphEdge[]

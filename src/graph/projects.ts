@@ -41,6 +41,71 @@ export function repoUrlOf(cwd: string): string | undefined {
 }
 
 /**
+ * Requirement-level project attribution: an issue's project is the repo its
+ * own span's tool calls touched (sourceSpan window), NOT the session's first
+ * repo. This fixes the extraction defect where every requirement of a
+ * multi-repo session collapsed onto repos[0] — the user-visible symptom was
+ * 'no requirement ever crosses projects' while 36 sessions touched 2-4 repos.
+ *
+ * Legacy issues (no sourceSpan) anchor at their k-th user message so the span
+ * is recoverable from the graph. Events come from the injected reader.
+ */
+export async function attributeIssuesBySpan(store: TrackStore, dryRun = false): Promise<number> {
+  const [issues, graphs] = await Promise.all([store.listIssues(), store.listGraphs()])
+  const userMsgsBySession = new Map<string, Array<{ seq: number }>>()
+  const touchBySession = new Map<string, Array<{ seq: number; url: string }>>()
+  for (const g of graphs) {
+    const msgs = g.nodes
+      .filter((n) => n.kind === 'user-message')
+      .sort((a, b) => a.citation.seqStart - b.citation.seqStart)
+      .map((n) => ({ seq: n.citation.seqStart }))
+    if (msgs.length > 0) userMsgsBySession.set(g.sessionId, msgs)
+    if (Array.isArray(g.header.repoTouch) && g.header.repoTouch.length > 0) {
+      touchBySession.set(g.sessionId, g.header.repoTouch.sort((a, b) => a.seq - b.seq))
+    }
+  }
+  // Only multi-repo sessions can have requirement-level cross-project issues.
+  const sessionRepoCount = new Map<string, number>()
+  for (const g of graphs) sessionRepoCount.set(g.sessionId, Array.isArray(g.header.repos) ? g.header.repos.length : 0)
+  const bySession = new Map<string, typeof issues>()
+  for (const issue of issues) {
+    const sid = issue.linkedSessionIds?.[0]
+    if (!sid) continue
+    if ((sessionRepoCount.get(sid) ?? 0) <= 1) continue
+    const list = bySession.get(sid) ?? []
+    list.push(issue)
+    bySession.set(sid, list)
+  }
+  let changed = 0
+  for (const [sid, sessIssues] of bySession) {
+    const msgs = userMsgsBySession.get(sid) ?? []
+    const touch = touchBySession.get(sid) ?? []
+    const sorted = sessIssues
+      .slice()
+      .sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? '') || (a.id < b.id ? -1 : 1))
+    for (const issue of sorted) {
+      const k = sorted.findIndex((i) => i.id === issue.id)
+      const span = issue.sourceSpan?.seqStart !== undefined && issue.sourceSpan.seqStart > 0
+        ? { start: issue.sourceSpan.seqStart, end: issue.sourceSpan.seqEnd ?? Number.MAX_SAFE_INTEGER }
+        : msgs[k] !== undefined
+          ? { start: msgs[k]!.seq, end: msgs[k + 1]?.seq ?? Number.MAX_SAFE_INTEGER }
+          : undefined
+      if (!span) continue
+      // First repoTouch entry at/after span.start, before span.end.
+      let lo = 0, hi = touch.length - 1, pos = -1
+      while (lo <= hi) { const mid = (lo + hi) >> 1; if (touch[mid]!.seq >= span.start) { pos = mid; hi = mid - 1 } else lo = mid + 1 }
+      if (pos < 0 || touch[pos]!.seq >= span.end) continue
+      const projectId = repoProjectIdFor(touch[pos]!.url)
+      if (issue.projectId === projectId) continue
+      if (dryRun) { changed += 1; continue }
+      await store.upsertIssue({ ...issue, projectId, updatedAt: new Date().toISOString() })
+      changed += 1
+    }
+  }
+  return changed
+}
+
+/**
  * Induct projects from stored graphs and assign issues to them.
  * @param store track store.
  * @param dryRun preview without writing (default false).

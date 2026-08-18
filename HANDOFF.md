@@ -1,22 +1,24 @@
-# HANDOFF — 日历纱线：跨项目 session + 更多关联线（2026-08-18）
+# HANDOFF — 需求级项目归属修复（attributeIssuesBySpan）（2026-08-18）
 
-## 用户反馈
-- 图很抽象，点之间几乎没有联系
-- session 几乎只跟一个项目关联，和直觉不符
-
-## 根因
-- session.projects 只取 segments 的 proj（= issue.projectId = 第一个 repo），完全忽略 graph.header.repos（36 个 session 实际有 2-4 个 repo：dsh-track 主会话也碰 test-fakechris/harness-ops）
-- 日历只画 forked-from（17 条），derives/executed-in 没接
+## 背景（用户用修正版 HTML 指出）
+- 19 条会话线里需求跨项目 = 0，但 36 个 session tool 层触碰 2-4 仓库
+- 结论：抽取缺陷——issue.projectId 全绑 session 首个 repo（projects.ts repos[0]），需求级归属没做
 
 ## 修复
-- calendar.ts：session.projects = graph.header.repos 全部 repo（映射到日历项目 id）；补 executed-in 跨会话连线（同一需求被多 session 执行 → 连接它们的节点）；CalLink kind 加 executed-in
-- calendar-yarn.tsx：渲染青虚线(executed-in)；图例更新「泳道=会话触碰的全部仓库」
-- 299/299 单测；bundle 100.74kB
+- repos.ts：新增 reposOfEventsInRange(events, start, end)——需求 span 窗口内触碰的仓库
+- projects.ts：新增 attributeIssuesBySpan——issue 的 projectId = 它自己 span 窗口触碰的仓库；旧 issue 无 span 时按「该 session 下第 k 个需求」锚定第 k 条 user message 构造 span
+- index.ts link-all：graph 构建后先跑 attributeIssuesBySpan（读事件），再 induceProjects
+- 299/299 单测
 
-## v2 修复
-- executed-in 跨会话连线：同一 issue 在多个 session 各有节点，用 (id, toSession) 定位连接（修复 to===rid 跳过 bug）
+## v4 修复
+- repoTouch 存进 graph.header（构建时算好 seq→repo 索引），attributeIssuesBySpan 直接查表，不再 readSession（性能从超时→秒级）
+- GRAPH_VERSION 6 强制全量重建
+
+## v3 优化
+- buildRepoTouchIndex + reposInRange 二分索引：每 session 一次构建，需求 span 二分查表（不再每 issue 全事件扫描）
+- attributeIssuesBySpan 只处理多 repo session（单 repo 跳过），按 session 缓存事件，每 session 只读一次日志
 
 ## 重启后验收
-1. 重启 3080（host 改动 calendar.ts）
-2. 硬刷新 → 主 session 泳道显示多项目（dsh-track + test-fakechris + harness-ops）
-3. 出现青虚线（跨会话共执行）
+1. 重启 3080（host 改动）
+2. POST /api/track/graph/link-all {} → attributed > 0
+3. GET /api/track/calendar → 需求层跨项目 > 0（同一 session 的需求分属不同仓库）

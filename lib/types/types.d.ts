@@ -331,6 +331,11 @@ export interface SessionGraph {
             root: string;
             name: string;
         }>;
+        /** Sorted tool-call seq -> repo url index (requirement-level attribution). */
+        repoTouch?: Array<{
+            seq: number;
+            url: string;
+        }>;
     };
     nodes: GraphNode[];
     edges: GraphEdge[];
