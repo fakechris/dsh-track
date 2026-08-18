@@ -13,6 +13,15 @@ import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client';
 /** Stable ids for the injected panel and toggle. */
 export declare const PANEL_ID = "dsh-track-panel";
 export declare const FAB_ID = "dsh-track-fab";
+/**
+ * Open `sessionId` in the left conversation and scroll to `messageId`'s user
+ * prompt row. Falls back to the first user message in the loaded window,
+ * then to the bottom, when the message cannot be located.
+ */
+export declare function jumpToConversation(opts: {
+    sessionId?: string;
+    messageId?: string;
+}): Promise<void>;
 /** Programmatic entry for the composer-dock strip: ensure the host is
  *  mounted (fresh pages may not have attached yet) and open the panel. */
 export declare function openTrackPanel(): void;

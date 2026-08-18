@@ -88,7 +88,7 @@ function flashRow(el: HTMLElement): void {
  * prompt row. Falls back to the first user message in the loaded window,
  * then to the bottom, when the message cannot be located.
  */
-async function jumpToConversation(opts: { sessionId?: string; messageId?: string }): Promise<void> {
+export async function jumpToConversation(opts: { sessionId?: string; messageId?: string }): Promise<void> {
   const { sessionId, messageId } = opts
   if (!sessionId || clientCtx === null) return
   // Runtime face: the browser's `ctx.sessions` is the client SessionsService
@@ -474,10 +474,6 @@ const PANEL_CSS = `
 #${PANEL_ID} .inv-lg-group { font-size: 10.5px; font-weight: 600; text-transform: uppercase; opacity: .55; margin-top: 5px; }
 #${PANEL_ID} .inv-lg-row { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #${PANEL_ID} .inv-lg-msg { padding-left: 12px; color: var(--dsw-alias-label-secondary, #555); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#${PANEL_ID} .inv-graphview { position: relative; z-index: 1; grid-column: 1 / -1 !important; grid-row: 1 / -1 !important; width: 100%; height: 100%; display: flex; flex-direction: column; background: var(--dsw-alias-bg-base, #fff); overflow: hidden; }
-#${PANEL_ID} .inv-graphview[hidden] { display: none; }
-#${PANEL_ID} .inv-graphview-head { display: flex; align-items: center; gap: 8px; padding: 0 10px; height: 36px; border-bottom: 1px solid var(--dsw-alias-border-l1, rgba(0,0,0,.06)); flex: none; }
-#${PANEL_ID} .inv-graphview .inv-graph { flex: 1; min-height: 0; position: relative; overflow: hidden; padding: 0; }
 #${PANEL_ID} .inv-related { border-top: 1px dashed var(--dsw-alias-border-l1, rgba(0,0,0,.1)); padding: 6px 10px; font-size: 12px; }
 #${PANEL_ID} .gv-svg { display: block; }
 #${PANEL_ID} .gv-edge { stroke: rgba(0,0,0,.15); stroke-width: 1; }
@@ -511,28 +507,6 @@ const PANEL_CSS = `
   cursor: col-resize; z-index: 2;
 }
 
-/* Full-area graph view (direct child of the conversation root — takes Chat's slot). */
-#dsh-track-graphview {
-  grid-column: 1 !important;
-  grid-row: 2 !important;
-  width: 100%; height: 100%;
-  display: flex; flex-direction: column;
-  background: var(--dsw-alias-bg-base, #fff);
-  color: var(--dsw-alias-label-primary, #171719);
-  position: relative; z-index: 10;
-}
-#dsh-track-graphview[hidden] { display: none; }
-#dsh-track-graphview .inv-graphview-head {
-  display: flex; align-items: center; gap: 8px; padding: 0 12px;
-  height: 38px; border-bottom: 1px solid var(--dsw-alias-border-l1, rgba(0,0,0,.06)); flex: none;
-}
-#dsh-track-graphview .inv-title { flex: 1; font-weight: 600; font-size: 13px; }
-#dsh-track-graphview .inv-act {
-  padding: 2px 8px; border: 1px solid var(--dsw-alias-border-l2, rgba(0,0,0,.15));
-  border-radius: 5px; background: transparent; color: var(--dsw-alias-label-secondary, #555);
-  font-size: 11.5px; cursor: pointer;
-}
-#dsh-track-graphview .inv-graph { flex: 1; min-height: 0; position: relative; overflow: hidden; }
 `
 
 /** ---- mounting ---- */
@@ -1032,6 +1006,11 @@ interface GraphDocLite {
   version: number
 }
 
+/** Notify the conversation.view graph tab to refresh its data. */
+function notifyGraphBuilt(): void {
+  window.dispatchEvent(new CustomEvent('track:graph-built'))
+}
+
 /** Current session id from the sessions service list snapshot. */
 function activeSessionId(): string | undefined {
   if (clientCtx === null) return undefined
@@ -1114,38 +1093,6 @@ function renderGraphHtml(doc: GraphDocLite, sessionId: string): string {
   return parts.join('')
 }
 
-/** Fetch + render the PROJECT graph (multi-session visual graph) into the tab. */
-async function renderGraph(): Promise<void> {
-  if (panel === null) return
-  const el = document.querySelector<HTMLElement>('#dsh-track-graphview .inv-graph')
-  const title = document.querySelector('.inv-graph-session')
-  if (el === null) return
-  const sessionId = activeSessionId()
-  if (sessionId === undefined || sessionId === '') {
-    el.innerHTML = '<div class="inv-empty">无当前会话 — 打开一个会话后显示项目级会话/需求/代码图谱</div>'
-    if (title !== null) title.textContent = ''
-    return
-  }
-  if (title !== null) title.textContent = '项目图谱'
-  // Resolve the workspace cwd from the current session's stored graph.
-  let cwd = ''
-  try {
-    const d = await fetch('/api/track/graph?sessionId=' + encodeURIComponent(sessionId)).then((r) => r.json())
-    cwd = d.doc?.header?.cwd ?? ''
-  } catch { cwd = '' }
-  let cal: CalData | null = null
-  try {
-    const r = await fetch('/api/track/calendar?cwd=' + encodeURIComponent(cwd)).then((r) => r.json())
-    cal = r.calendar ?? null
-  } catch { cal = null }
-  if (cal === null || cal.sessions.length === 0) {
-    el.innerHTML = '<div class="inv-empty">暂无日历数据 — 点「构建」生成会话图后重试</div>'
-    return
-  }
-  const jump = (j: CalJump): void => { void jumpToConversation({ sessionId: j.sessionId, messageId: j.messageId }) }
-  mountCalendar(el, cal, jump)
-}
-
 /** Build the current session's graph (POST) then re-render. */
 async function buildCurrentGraph(): Promise<void> {
   const sessionId = activeSessionId()
@@ -1156,8 +1103,8 @@ async function buildCurrentGraph(): Promise<void> {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ sessionId }),
     })
-  } catch { /* surface via the re-render */ }
-  await renderGraph()
+  } catch { /* ignore */ }
+  notifyGraphBuilt()
 }
 
 /** Batch build the workspace of the current session (POST build-all). */
@@ -1178,13 +1125,10 @@ async function buildAllGraphs(): Promise<void> {
       body: JSON.stringify({ cwd, max_sessions: 200 }),
     })
   } catch { /* ignore */ }
-  await renderGraph()
+  notifyGraphBuilt()
 }
 
 function restoreLayout(): void {
-  graphTab?.remove()
-  graphTab = null
-  document.getElementById('dsh-track-graphview')?.remove()
   if (host === null) return
   host.candidate.classList.remove('inv-host')
   if (host.header !== null) host.header.classList.remove('inv-host-header')
@@ -1195,45 +1139,10 @@ function restoreLayout(): void {
   if (prior.gridRows !== undefined) host.candidate.style.gridTemplateRows = prior.gridRows
 }
 
-let graphMode = false
-let graphTab: HTMLButtonElement | null = null
-
-/** Full-width graph view: hide the sidebar body, take the whole conversation
- *  area (same size as the Chat Trajectory tab). */
-function setGraphMode(open: boolean): void {
-  graphMode = open
-  // The graph swaps the CHAT CONTENT cell (grid-column 1 / grid-row 2 — the
-  // same grid cell where Chat renders, below the tab strip). The header/tab
-  // row stays visible so the user can switch back to Chat/Trajectory.
-  let gv = document.getElementById('dsh-track-graphview')
-  if (open && gv === null && host !== null) {
-    gv = document.createElement('div')
-    gv.id = 'dsh-track-graphview'
-    gv.innerHTML = '<div class="inv-graphview-head">'
-      + '<span class="inv-title">会话结构图 <span class="inv-graph-session"></span></span>'
-      + '<button class="inv-act inv-graph-build" title="构建当前会话的执行树">构建</button>'
-      + '<button class="inv-act inv-graph-buildall" title="批量构建本工作区所有会话的图">全构建</button>'
-      + '</div><div class="inv-graph"></div>'
-    host.candidate.append(gv)
-  }
-  if (host !== null) {
-    // Hide ONLY the chat scroll body (the React-managed messages list); the
-    // header/tab strip and the right sidebar (panel) stay untouched — exactly
-    // how Chat behaves: switching tabs only swaps the middle content cell.
-    if (host.scrollBody !== null) host.scrollBody.style.display = open ? 'none' : ''
-  }
-  // The right sidebar (Track panel) is NEVER hidden by the graph view.
-  if (gv !== null) gv.hidden = !open
-  if (graphTab !== null) graphTab.setAttribute('aria-selected', String(open))
-  if (open) { void renderGraph() }
-}
-
 function setPanelOpen(open: boolean): void {
   panelOpen = open
   if (panel !== null) panel.hidden = !open
   if (fab !== null) fab.hidden = open
-  if (!open) setGraphMode(false)
-  if (graphTab !== null) graphTab.setAttribute('aria-selected', String(open && graphMode))
   try { localStorage.setItem(OPEN_KEY, open ? '1' : '0') } catch { /* ignore */ }
   if (open) syncGrid()
   else if (host !== null) restoreLayout()
@@ -1282,55 +1191,10 @@ function attach(candidate: HTMLElement, header: HTMLElement | null, tablist: HTM
     if (panel.isConnected) panel.remove()
     candidate.append(panel)
   }
-  // side-panel pattern: append an "Track" tab to the session tab strip so
-  // the panel has a native tab entry (like Trajectory / goal tabs).
-  mountTab()
   syncGrid()
 }
 
 let trackTab: HTMLButtonElement | null = null
-
-/** Append an Track tab to the conversation tab strip (side-panel pattern). */
-function mountTab(): void {
-  if (host === null) return
-  // The session tab strip may render after the first attach (blank session →
-  // active, or React removed our injected tab on a re-render): resolve the
-  // live strip from the candidate instead of trusting the stale ref.
-  let tl = host.tablist
-  if (tl === null || !tl.isConnected) {
-    tl = host.candidate.querySelector<HTMLElement>('[role="tablist"]')
-    if (tl !== null) host.tablist = tl
-  }
-  if (tl === null || tl === undefined) return
-  if (tl.querySelector('.inv-tab') !== null) return
-  const reference = tl.querySelector<HTMLButtonElement>(':scope > button[role="tab"][aria-selected="false"]')
-    ?? tl.querySelector<HTMLButtonElement>(':scope > button[role="tab"]')
-  if (reference === null) return
-  const makeTab = (text: string): HTMLButtonElement => {
-    const t = document.createElement('button')
-    t.type = 'button'
-    t.role = 'tab'
-    t.className = reference.className + ' inv-tab'
-    const l = document.createElement('span')
-    l.textContent = text
-    t.append(l)
-    tl.append(t)
-    return t
-  }
-  // The sidebar stays reachable via the FAB (◆); the tab strip only hosts
-  // the 会话结构图 view switch — clicking a NATIVE tab (Chat/Trajectory)
-  // exits the graph view back to the conversation.
-  const gtab = makeTab('会话结构图')
-  gtab.setAttribute('aria-selected', String(false))
-  gtab.addEventListener('click', () => { setGraphMode(true) })
-  graphTab = gtab
-  // Delegated: any native (non-inv) tab click exits the graph view.
-  tl.addEventListener('click', (ev) => {
-    const t = (ev.target as HTMLElement).closest<HTMLElement>('button[role="tab"]')
-    if (t === null || t.classList.contains('inv-tab')) return
-    if (graphMode) setGraphMode(false)
-  }, true)
-}
 
 /**
  * Resolve the conversation root hosting the session tab strip.
@@ -1395,7 +1259,6 @@ function tryMount(): void {
     if (host.header !== null) host.header.classList.add('inv-host-header')
     if (host.headerWrapper !== null) host.headerWrapper.classList.add('inv-host-header')
     if (host.scrollBody !== null) host.scrollBody.classList.add('inv-host-scroll')
-    mountTab()
     syncGrid()
     return
   }
@@ -1773,7 +1636,6 @@ export function mountRightPanel(ctx: ClientContext): () => void {
   observer.observe(document.body, { childList: true, subtree: true })
   tryMount()
   refresh()
-  void renderGraph()
   // Late-render retries: the session tab strip (and sometimes the whole
   // conversation root) renders after the first attach; re-run the mount so
   // the Track tab appears once the strip exists. (MutationObserver only
@@ -1787,14 +1649,14 @@ export function mountRightPanel(ctx: ClientContext): () => void {
   // re-injected within one tick.
   const autoRefresh = window.setInterval(() => {
     tryMount()
-    if (panelOpen && !document.hidden) { refresh(); void renderGraph() }
+    if (panelOpen && !document.hidden) { refresh() }
   }, 20000)
-  const onFocus = (): void => { tryMount(); refresh(); void renderGraph() }
+  const onFocus = (): void => { tryMount(); refresh() }
   // Re-render the graph when the active session changes.
   let unsubSessions: (() => void) | undefined
   try {
     const sessions = (clientCtx as unknown as { sessions: { list: { subscribe(fn: () => void): () => void } } }).sessions
-    unsubSessions = sessions.list.subscribe(() => { if (panelOpen) void renderGraph() })
+    unsubSessions = sessions.list.subscribe(() => { if (panelOpen) refresh() })
   } catch { unsubSessions = undefined }
   window.addEventListener('focus', onFocus)
 
