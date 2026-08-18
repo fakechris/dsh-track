@@ -63,7 +63,9 @@ export interface CalLink {
     /** from requirement id -> to requirement id (both are yarn nodes). */
     from: string;
     to: string;
-    kind: 'forked-from' | 'derives';
+    kind: 'forked-from' | 'derives' | 'executed-in';
+    /** For executed-in: the session whose node is the target (same id, many nodes). */
+    toSession?: string;
 }
 export interface CalendarData {
     days: number;

@@ -62,7 +62,8 @@ export interface CalSession {
 export interface CalLink {
     from: string;
     to: string;
-    kind: 'forked-from' | 'derives';
+    kind: 'forked-from' | 'derives' | 'executed-in';
+    toSession?: string;
 }
 export interface CalData {
     days: number;

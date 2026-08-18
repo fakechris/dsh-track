@@ -39,7 +39,7 @@ export interface CalSession {
   perDay: CalPerDay[]; segments: CalSegment[]; switches: number;
   nReq: number; nInstr: number; projects: string[];
 }
-export interface CalLink { from: string; to: string; kind: 'forked-from' | 'derives' }
+export interface CalLink { from: string; to: string; kind: 'forked-from' | 'derives' | 'executed-in'; toSession?: string }
 export interface CalData {
   days: number; dayBase: string; projects: CalProject[];
   sessions: CalSession[]; requirements: CalRequirement[];
@@ -136,11 +136,13 @@ function YarnView(props: {
           ))}
           {(data.links ?? []).map((l, k) => {
             const a = reqMap.get(l.from);
-            const b = reqMap.get(l.to);
+            const b = l.toSession !== undefined
+              ? data.requirements.find((r) => r.id === l.to && r.sessionId === l.toSession)
+              : reqMap.get(l.to);
             if (a === undefined || b === undefined) return null;
             const dim = focus !== null && focus !== a.sessionId && focus !== b.sessionId;
-            const color = l.kind === 'forked-from' ? '#C77DDF' : '#E3A63B';
-            const dashed = l.kind === 'derives';
+            const color = l.kind === 'forked-from' ? '#C77DDF' : l.kind === 'executed-in' ? '#3FA79B' : '#E3A63B';
+            const dashed = l.kind === 'derives' || l.kind === 'executed-in';
             return (
               <path key={'l' + k} d={'M ' + px(a) + ' ' + py(a) + ' L ' + px(b) + ' ' + py(b)}
                 fill='none' stroke={color} strokeWidth={1} strokeDasharray={dashed ? '3 3' : 'none'}
@@ -354,7 +356,7 @@ export function CalendarYarnRoot(props: CalProps) {
           <div style={{ fontFamily: T.mono, fontSize: 14, letterSpacing: 1 }}>dsh-track<span style={{ color: T.faint }}> / </span><span style={{ color: T.muted }}>日历纱线</span></div>
           <div style={{ fontFamily: T.mono, fontSize: 10.5, color: T.muted }}>{list.length} sessions · <span style={{ color: GOLD }}>{tangled.length} 缠绕</span> · 需求 {totReq} · 指示 {totIns}</div>
           <div style={{ fontFamily: T.mono, fontSize: 10, color: T.faint }}>用户 {data.sessions.filter((s) => s.origin === 'user').length} · 子代理 {data.sessions.filter((s) => s.origin === 'subagent').length} · 自动 {data.sessions.filter((s) => s.origin === 'auto').length}</div>
-          <div style={{ marginLeft: 'auto', fontFamily: T.mono, fontSize: 9.5, color: T.faint }}>节点=需求(大小=该需求工作量,即其触发的会话事件数) · 紫线=子代理继承 · 黄虚线=需求派生 · 金环=跨项目缠绕</div>
+          <div style={{ marginLeft: 'auto', fontFamily: T.mono, fontSize: 9.5, color: T.faint }}>节点=需求(大小=工作量) · 紫线=子代理继承 · 黄虚线=需求派生 · 青虚线=跨会话共执行 · 泳道=会话触碰的全部仓库 · 金环=跨项目缠绕</div>
         </div>
         <div style={{ display: 'flex', gap: 6, margin: '10px 0', flexWrap: 'wrap' }}>
           {(['user', 'subagent', 'auto'] as CalOrigin[]).map((o) => {
