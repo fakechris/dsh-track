@@ -11,7 +11,8 @@ import { hashCanonical } from '../sync/raw-event.ts'
 import { contentTokens } from '../sync/align.ts'
 import { titleSimilarity } from '../store.ts'
 import { semanticLinkId } from './links.ts'
-import { projectIdFor } from './projects.ts'
+import { projectIdFor, repoProjectIdFor } from './projects.ts'
+import { repoUrlOf } from './repos.ts'
 import type { TrackStore } from '../store.ts'
 import type { CommitArtifact, Link } from '../types.ts'
 
@@ -50,7 +51,7 @@ export function parseCommitLines(raw: string, repo: string): CommitArtifact[] {
     return {
       id: commitIdFor(sha),
       sha,
-      projectId: projectIdFor(repo),
+      projectId: repoUrlOf(repo) !== undefined ? repoProjectIdFor(repoUrlOf(repo)!) : projectIdFor(repo),
       repo,
       authorAt,
       subject: (subject ?? '').slice(0, 200),

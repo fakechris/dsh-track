@@ -140,6 +140,7 @@ describe('graph service + store', () => {
 
   it('round-trips a graph through the store', async () => {
     const g = buildSessionGraph('sess-graph-1', events, hdr, NOW)
+    g.header.repos = [] // repo-touch freshness: a graph without repos is stale
     await store.upsertGraph(g);
     const back = await store.getGraph('sess-graph-1');
     expect(back?.sessionId).toBe('sess-graph-1');

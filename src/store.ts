@@ -822,6 +822,12 @@ export class TrackStore {
     await this.chain('projects', () => this.unit.putRecord('projects', project.id, project))
   }
 
+  /** Remove a project record (stale induction cleanup). */
+  async deleteProject(id: string): Promise<void> {
+  await this.ready()
+    await this.chain('projects', () => this.unit.deleteRecord('projects', id))
+  }
+
   async getProject(id: string): Promise<Project | undefined> {
   await this.ready()
     const { tables } = await this.unit.loadAll()
