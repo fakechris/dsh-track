@@ -20,6 +20,7 @@ import type { TrackStripProps } from './strip-contract.ts'
 import { TrackStrip } from './strip.tsx'
 import { en, NS, zh, type TrackKey } from './locales.ts'
 import { mountRightPanel, openTrackPanel, jumpToConversation } from './right-panel.ts'
+import { installDeepLink } from './deep-link.ts'
 import { GraphView } from './graph-view.tsx'
 import type { CalJump } from './calendar-yarn.tsx'
 
@@ -44,6 +45,13 @@ export function apply(ctx: ClientContext): void {
   // conversation" links (ctx.sessions.open / binding) — pass it through.
   const panelDisposer = mountRightPanel(ctx)
   ctx.effect(() => panelDisposer, 'dsh-track: right panel')
+
+  // ---- deep links from outside the app ----
+  // /s/<sessionId>[/<messageId>] (bookmarkable) and
+  // ?open=<sessionId>[&message=<messageId>] (one-shot) both jump into the
+  // named conversation, reusing jumpToConversation's open + scroll logic.
+  const deepLinkDisposer = installDeepLink(ctx)
+  ctx.effect(() => deepLinkDisposer, 'dsh-track: deep link')
 
   // ---- composer-dock strip (open capture count + panel entry) ----
   // The count is fetched live by TrackStrip itself; the injected props only
