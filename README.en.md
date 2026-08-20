@@ -10,8 +10,8 @@ English | [中文](README.md)
 > tasks have a lifecycle. Everything lives inside the harness (session events + storage KV), zero
 > external dependencies.
 
-**Status** Active · **Tests** 240 passing · **Build** `pnpm run build` · **Version** 0.5.0
-> **v0.6.0 · session graphs + calendar yarn + evidence discipline (main, unreleased, 2026-08-18)**:
+**Status** Active · **Tests** 240 passing · **Build** `pnpm run build` · **Version** 0.6.0
+> **v0.6.0 · session graphs + calendar yarn + evidence discipline (2026-08-21)**:
 > **Session execution graphs (M1)** — build any session into a deterministic turn→step→tool tree
 > (every edge cites (sessionId, seq) back into the raw log), batch-build per workspace, rendered as
 > a "Session graph" conversation.view tab (host-spec compliant); **Calendar yarn** — session
