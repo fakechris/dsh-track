@@ -1,0 +1,57 @@
+{
+  "$schema": "https://dsh-std.example/schemas/dsh-plugin/v0.15.json",
+  "id": "io.github.fakechris.dsh-track",
+  "name": "Track Bridge",
+  "version": "0.5.0",
+  "manifestVersion": "0.15",
+  "facets": {
+    "host": {
+      "entry": "lib/index.js",
+      "apiVersion": "v1alpha1"
+    }
+  },
+  "requires": {
+    "contracts": [
+      {
+        "apiVersion": "views.dsh/v1alpha1",
+        "kind": "ViewContribution"
+      }
+    ]
+  },
+  "contributes": {
+    "views": [
+      {
+        "id": "io.github.fakechris.dsh-track.sidebar",
+        "title": "Track",
+        "location": "sidebar.footer",
+        "priority": "normal",
+        "when": "root",
+        "component": "lib/client.js"
+      },
+      {
+        "id": "io.github.fakechris.dsh-track.details",
+        "title": "Track",
+        "location": "details.panel",
+        "priority": "normal",
+        "when": "session",
+        "component": "lib/client.js"
+      },
+      {
+        "id": "io.github.fakechris.dsh-track.graph-tab",
+        "title": "Session graph",
+        "location": "conversation.tab",
+        "priority": "normal",
+        "when": "session",
+        "component": "lib/client.js"
+      },
+      {
+        "id": "io.github.fakechris.dsh-track.strip",
+        "title": "Track strip",
+        "location": "composer.dock",
+        "priority": "normal",
+        "when": "session",
+        "component": "lib/client.js"
+      }
+    ]
+  }
+}
