@@ -126,6 +126,15 @@ HTTP API（面板的数据面，`/api/track/*`）：
 | `GET /api/track/funnel` | 工具调用漏斗（capture 转化率等） |
 | `POST /api/track/sync` | 历史同步（等价 `track_sync_history`） |
 
+## 🔗 深链跳转（Deep Links）
+
+从外部（终端 / 其他 agent / jump 启动器 / 脚本）一键打开浏览器并定位到 Web GUI 的**指定会话**（可精确到某条消息）：
+
+- **路径形式** `http://<host>:<port>/s/<sessionId>[/<messageId>]` —— 持久化，书签/刷新/分享持续有效；
+- **查询形式** `http://<host>:<port>/?open=<sessionId>[&message=<messageId>]` —— 一次性，跳转后参数自动清理；
+- 能力由 `src/client/deep-link.ts` 提供（复用 `jumpToConversation` 的 open + 滚动定位，见上节「↩ 对话」）。
+- **给其他 agent / 脚本的使用指引**（含获取 sessionId / messageId 的命令、验证与注意事项）：[`docs/deep-link-handoff.md`](docs/deep-link-handoff.md)
+
 ## 🏗️ 架构
 
 **Fat skill + thin harness**：决策判据与调用纪律在 [`skills/dsh-track/SKILL.md`](skills/dsh-track/SKILL.md)，harness 侧只注册工具与存储，不做判断。

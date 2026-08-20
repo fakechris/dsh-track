@@ -165,6 +165,15 @@ HTTP API (the panel's data face, under `/api/track/*`):
 | `GET /api/track/funnel` | tool-invocation funnel (capture conversion, etc.) |
 | `POST /api/track/sync` | history sync (same as `track_sync_history`) |
 
+## 🔗 Deep Links
+
+Jump from outside (terminal / another agent / jump launcher / script) straight to a **specific conversation** in the Web GUI (optionally to a specific message):
+
+- **Path form** `http://<host>:<port>/s/<sessionId>[/<messageId>]` — persistent; bookmarks / refresh / sharing keep working;
+- **Query form** `http://<host>:<port>/?open=<sessionId>[&message=<messageId>]` — one-shot; the params are stripped after the jump;
+- Implemented in `src/client/deep-link.ts` (reuses `jumpToConversation`'s open + scroll logic, see the **「↩ 对话」** link above).
+- **Handoff guide for other agents / scripts** (how to resolve `sessionId` / `messageId`, open, and verify): [`docs/deep-link-handoff.md`](docs/deep-link-handoff.md)
+
 ## 🏗️ Architecture
 
 **Fat skill + thin harness**: decision criteria and calling discipline live in
