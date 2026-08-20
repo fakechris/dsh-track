@@ -1,7 +1,7 @@
 {
   "name": "@fakechris/dsh-track",
   "description": "Track Bridge: embedded task-management engine for DeepSeek Harness — decision-point protocol, capture wall, and Linear-shaped issue store over session events + storage KV",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
