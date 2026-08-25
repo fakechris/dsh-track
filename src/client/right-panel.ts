@@ -1154,7 +1154,7 @@ function renderGraphHtml(doc: GraphDocLite, sessionId: string): string {
 }
 
 /** Build the current session's graph (POST) then re-render. */
-async function buildCurrentGraph(): Promise<void> {
+export async function buildCurrentGraph(): Promise<void> {
   const sessionId = activeSessionId()
   if (sessionId === undefined || sessionId === '') return
   try {
@@ -1162,6 +1162,21 @@ async function buildCurrentGraph(): Promise<void> {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ sessionId }),
+    })
+  } catch { /* ignore */ }
+  notifyGraphBuilt()
+}
+
+/** Full pipeline: build every workspace's graphs + semantic links + project
+ *  induction in one call (the graph-tab 「构建全部会话」 action). Works even
+ *  when no graphs exist yet — the server derives cwds from the session corpus
+ *  and rebuilds whatever is stale (deterministic, idempotent). */
+export async function buildAllWorkspaces(): Promise<void> {
+  try {
+    await fetch('/api/track/graph/link-all', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ max_sessions: 200 }),
     })
   } catch { /* ignore */ }
   notifyGraphBuilt()
