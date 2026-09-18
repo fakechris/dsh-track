@@ -7,7 +7,7 @@ import { describe, expect, it, beforeAll, afterAll } from 'vitest'
 import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
 import { buildSessionGraph } from '../src/graph/build.ts'
 import { buildCalendar } from '../src/graph/calendar.ts'
-import { projectIdFor } from '../src/graph/projects.ts'
+import { projectIdFor, repoProjectIdFor } from '../src/graph/projects.ts'
 import { createPluginHarness } from './harness.ts'
 
 const CWD = '/ws/cal'
@@ -88,5 +88,34 @@ describe('buildCalendar', () => {
     const r1 = cal2.requirements.find((r) => r.id === 'track_issue_c1');
     const r2 = cal2.requirements.find((r) => r.id === 'track_issue_c2');
     expect(r1?.day).not.toBe(r2?.day);
+  })
+
+  it('self-heals project lanes from graph repos when the projects table is empty', async () => {
+    // Regression (2026-08-21): after the projects table was wiped, every
+    // segment collapsed into '未归属' and the yarn lost all lanes. The calendar
+    // must re-derive missing project metadata from graph header.repos.
+    const repoUrl = 'https://github.com/dsh-external/dsh-track.git';
+    const projId = repoProjectIdFor(repoUrl);
+    // No upsertProject at all — simulate a wiped/empty projects table.
+    const ev3: SessionEvent[] = [
+      { type: 'turn/start', seq: 1, time: BASE, data: { turn: 1 } },
+      { type: 'user/message', seq: 2, time: BASE + 1000, data: { content: [{ type: 'text', text: '自愈需求' }], source: { kind: 'user' }, id: 'm3' } },
+      { type: 'tool/call', seq: 3, time: BASE + 2000, data: { name: 'bash', callId: 'c3', arguments: '{}', turn: 1, step: 1 } },
+    ] as unknown as SessionEvent[];
+    const hdr3: SessionHeader = { version: 0, id: 'c3', createdAt: BASE, cwd: '/ws/cal' } as SessionHeader;
+    const g3 = buildSessionGraph('c3', ev3, hdr3, BASE + 3000);
+    g3.header.repos = [{ name: 'dsh-track', url: repoUrl, root: '/ws/cal' }];
+    await store.upsertGraph(g3);
+    await store.upsertIssue({ id: 'track_issue_c3', identifier: 'INV-3', title: '自愈需求', description: '', priority: 2, state: 'todo' as const, teamId: 'INV', labels: [], linkedSessionIds: ['c3'], projectId: projId, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } as never);
+    await store.upsertLink({ id: 'track_link_c3', fromType: 'issue', fromId: 'track_issue_c3', toType: 'session', toId: 'c3', kind: 'executed-in', createdAt: new Date().toISOString(), linkMethod: 'session-link' } as never);
+
+    const cal3 = await buildCalendar(store);
+    // The derived project lane exists with the repo name…
+    expect(cal3.projects.some((p) => p.id === projId && p.name === 'dsh-track')).toBe(true);
+    // …and the segment/requirement is attributed to it, not '未归属'.
+    const seg3 = cal3.sessions.find((x) => x.id === 'c3')?.segments[0];
+    expect(seg3?.proj).toBe(projId);
+    const req3 = cal3.requirements.find((r) => r.id === 'track_issue_c3');
+    expect(req3?.proj).toBe(projId);
   })
 });

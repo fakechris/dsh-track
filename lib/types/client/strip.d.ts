@@ -11,4 +11,4 @@
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots';
 import type { TrackStripProps } from './strip-contract.ts';
 /** Track strip component: label + live open capture count, click opens the panel. */
-export declare function TrackStrip({ captures: initial, onClick, t }: TrackStripProps & PropsLocale<'track'>): import("react").JSX.Element;
+export declare function TrackStrip({ captures: initial, onClick, t }: TrackStripProps & PropsLocale<'track'>): import("react/jsx-runtime").JSX.Element;

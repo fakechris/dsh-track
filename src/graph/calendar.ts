@@ -63,7 +63,23 @@ export async function buildCalendar(store: TrackStore, maxDays = 18): Promise<Ca
   const graphs = await store.listGraphs()
   const issues = await store.listIssues()
   const storeLinks = await store.listLinks()
-  const projById = new Map(projects.map((p) => [p.id, p]))
+  const calProjects: CalProject[] = projects.map((p) => ({ id: p.id, name: p.name, hue: hueFor(p.id) }))
+  const projInfo = new Map(calProjects.map((p) => [p.id, p]))
+  // Self-heal project lanes: the yarn must keep its day×project grid even when
+  // the projects table is stale/empty (e.g. after a prune wiped it). Every
+  // session graph carries the repos it touched (header.repos: name + url), so
+  // the deterministic repo-project id can be re-derived here on the fly —
+  // missing projects are appended with their repo name instead of collapsing
+  // all segments into '未归属'.
+  for (const g of graphs) {
+    for (const r of Array.isArray(g.header.repos) ? g.header.repos : []) {
+      const id = repoProjectIdFor(r.url)
+      if (projInfo.has(id)) continue
+      const p: CalProject = { id, name: r.name || id.slice(0, 12), hue: hueFor(id) }
+      projInfo.set(id, p)
+      calProjects.push(p)
+    }
+  }
   // Day window from the DATA range (no empty leading days).
   let minT = Number.MAX_SAFE_INTEGER, maxT = 0;
   for (const g of graphs) for (const n of g.nodes) {
@@ -127,7 +143,7 @@ export async function buildCalendar(store: TrackStore, maxDays = 18): Promise<Ca
       const instr = inUser.slice(1).map((n) => ({ text: n.title, messageId: n.messageId }))
       const turns = inRange.filter((n) => n.kind === 'turn' && n.outcome !== undefined).map((n) => ({ outcome: n.outcome! }))
       const tools = Array.from(new Set(inRange.filter((n) => n.kind === 'tool' && n.toolName).map((n) => n.toolName!))).slice(0, 6)
-      const proj = (issue?.projectId !== undefined && projById.has(issue.projectId)) ? issue.projectId : UNK_ID
+      const proj = (issue?.projectId !== undefined && projInfo.has(issue.projectId)) ? issue.projectId : UNK_ID
       segments.push({
         day, proj,
         req: issue?.title ?? (lead?.title ?? '(未归入需求)'),
@@ -164,7 +180,7 @@ export async function buildCalendar(store: TrackStore, maxDays = 18): Promise<Ca
     // test-fakechris / dsh-harness-ops and must show all three.
     const repoProjs = (g.header.repos ?? [])
       .map((r) => repoProjectIdFor(r.url))
-      .filter((id) => projById.has(id))
+      .filter((id) => projInfo.has(id))
     const known = segments.filter((s) => s.proj !== UNK_ID).map((s) => s.proj)
     let switches = 0;
     for (let k = 1; k < known.length; k++) if (known[k] !== known[k - 1]) switches++;
@@ -230,7 +246,7 @@ export async function buildCalendar(store: TrackStore, maxDays = 18): Promise<Ca
   }
   return {
     days, dayBase: new Date(base).toISOString(),
-    projects: projects.map((p) => ({ id: p.id, name: p.name, hue: hueFor(p.id) })),
+    projects: calProjects,
     sessions, requirements, links: calLinks,
   }
 }

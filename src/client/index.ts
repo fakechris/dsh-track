@@ -11,9 +11,13 @@
  * @module @fakechris/dsh-track/client
  */
 
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { ClientContext } from './platform.ts'
 // Type-only: pulls ui-conversation's SlotMap merge (composer.dock list slot).
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
+// Type-only: 0.1.5-rc.2 moved the `ctx.slots` Context merge here (the renderer
+// now owns the UI composition registry; ui-slots is types-only and declares no
+// Context merge of its own).
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 // Type-only: pulls the locale plugin's Context merge (ctx.locale).
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type { TrackStripProps } from './strip-contract.ts'

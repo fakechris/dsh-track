@@ -17,7 +17,7 @@
  * @module @fakechris/dsh-track/client/deep-link
  */
 
-import type { ClientContext, ISessions, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
+import type { ClientContext, ISessions, SessionId } from './platform.ts'
 import { jumpToConversation } from './right-panel.ts'
 
 const POLL_MS = 120

@@ -9,7 +9,7 @@
  * overlay (which the previous implementation wrongly did).
  * @module @fakechris/dsh-track/client/right-panel
  */
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client';
+import type { ClientContext } from './platform.ts';
 /** Stable ids for the injected panel and toggle. */
 export declare const PANEL_ID = "dsh-track-panel";
 export declare const FAB_ID = "dsh-track-fab";
@@ -22,6 +22,13 @@ export declare function jumpToConversation(opts: {
     sessionId?: string;
     messageId?: string;
 }): Promise<void>;
+/** Build the current session's graph (POST) then re-render. */
+export declare function buildCurrentGraph(): Promise<void>;
+/** Full pipeline: build every workspace's graphs + semantic links + project
+ *  induction in one call (the graph-tab 「构建全部会话」 action). Works even
+ *  when no graphs exist yet — the server derives cwds from the session corpus
+ *  and rebuilds whatever is stale (deterministic, idempotent). */
+export declare function buildAllWorkspaces(): Promise<void>;
 /** Programmatic entry for the composer-dock strip: ensure the host is
  *  mounted (fresh pages may not have attached yet) and open the panel. */
 export declare function openTrackPanel(): void;
