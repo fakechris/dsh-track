@@ -16,7 +16,7 @@
  * a fresh tab", back/forward, and pasting the URL into an already-open tab.
  * @module @fakechris/dsh-track/client/deep-link
  */
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client';
+import type { ClientContext } from './platform.ts';
 /** A deep-link target parsed out of the URL. */
 export interface DeepLinkTarget {
     sessionId: string;

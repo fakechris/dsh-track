@@ -10,8 +10,8 @@
  * @module @fakechris/dsh-track/client/right-panel
  */
 
-import { conversationContextKey } from '@deepseek-ai/dsh-client-runtime/client'
-import type { ClientContext, ISessions, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
+import { conversationContextKey } from './platform.ts'
+import type { ClientContext, ISessions, SessionId } from './platform.ts'
 import type { Capture, Issue } from '../types.ts'
 import { mountCalendar, type CalData, type CalJump } from './calendar-yarn.tsx'
 

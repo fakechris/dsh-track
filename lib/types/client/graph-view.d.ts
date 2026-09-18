@@ -5,4 +5,4 @@ export interface GraphViewProps {
     /** Jump handler: open a conversation + optional message. */
     onJump: (j: CalJump) => void;
 }
-export declare function GraphView(props: GraphViewProps): import("react").JSX.Element;
+export declare function GraphView(props: GraphViewProps): import("react/jsx-runtime").JSX.Element;

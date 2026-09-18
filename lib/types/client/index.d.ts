@@ -10,7 +10,7 @@
  * 3. A composer-dock strip showing pending counts.
  * @module @fakechris/dsh-track/client
  */
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client';
+import type { ClientContext } from './platform.ts';
 export type { TrackStripProps } from './strip-contract.ts';
 export type { TrackKey } from './locales.ts';
 /** Required services: slot registration, locale dictionaries, and the

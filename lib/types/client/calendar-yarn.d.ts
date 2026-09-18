@@ -82,6 +82,6 @@ export interface CalProps {
     onJump: (j: CalJump) => void;
 }
 /** Root: 3 tabs + header + filters + drill-down. */
-export declare function CalendarYarnRoot(props: CalProps): import("react").JSX.Element;
+export declare function CalendarYarnRoot(props: CalProps): import("react/jsx-runtime").JSX.Element;
 /** Mount (or re-mount) the calendar view into a container. */
 export declare function mountCalendar(container: HTMLElement, data: CalData, onJump: (j: CalJump) => void): void;

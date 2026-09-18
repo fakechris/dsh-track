@@ -9,7 +9,7 @@
  * overlay (which the previous implementation wrongly did).
  * @module @fakechris/dsh-track/client/right-panel
  */
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client';
+import type { ClientContext } from './platform.ts';
 /** Stable ids for the injected panel and toggle. */
 export declare const PANEL_ID = "dsh-track-panel";
 export declare const FAB_ID = "dsh-track-fab";
